@@ -4,19 +4,18 @@
       <header class="game-header">
         <div class="title-block">
           <h1>Mahjong Duo</h1>
-          <p class="subtitle">双人即时麻将对战</p>
         </div>
         <div class="header-status">
           <div class="status-line">
             <span class="status-dot" :class="connected ? 'online' : 'offline'"></span>
-            <span>{{ connected ? '已连接' : '未连接' }}</span>
-          </div>
-          <div class="status-line" v-if="connected && status.players">
-              <span>
-                {{ onlineSummary }} ｜座位 {{ seat ?? '?' }}｜对手 {{ opponent || '?' }}
+            <span>
+              {{ connected ? '已连接' : '未连接' }}
+              <template v-if="connected && status.players">
+                ｜{{ onlineSummary }} ｜座位 {{ seat ?? '?' }}｜对手 {{ opponent || '?' }}
                 <template v-if="!gameInProgress && readyStatus">｜准备 {{ readySummary }}</template>
-              </span>
-            </div>
+              </template>
+            </span>
+          </div>
         </div>
       </header>
 
@@ -67,9 +66,25 @@
             </div>
             <div class="info-row">
               <span class="label">明面子</span>
-              <span class="value" v-if="meldsOpp.length">
-                <span v-for="(m,i) in meldsOpp" :key="'mo'+i" class="meld-chip">{{ meldText(m) }}</span>
-              </span>
+              <div class="value melds-value" v-if="meldsOpp.length">
+                <div
+                  v-for="(m,i) in meldsOpp"
+                  :key="'mo'+i"
+                  :class="['meld-card', meldKindClass(m.kind)]"
+                >
+                  <span class="meld-kind">{{ kindText(m.kind) }}</span>
+                  <div class="meld-tiles">
+                    <span
+                      v-for="(t,j) in m.tiles"
+                      :key="`mot${i}-${j}`"
+                      class="tile tile-small meld-tile"
+                      :title="t2s(t)"
+                    >
+                      <img :src="tileImage(t)" :alt="t2s(t)" class="tile-face" />
+                    </span>
+                  </div>
+                </div>
+              </div>
               <span class="value" v-else>暂无</span>
             </div>
             <div class="info-row">
@@ -114,9 +129,25 @@
             </div>
             <div class="info-row">
               <span class="label">明面子</span>
-              <span class="value" v-if="meldsSelf.length">
-                <span v-for="(m,i) in meldsSelf" :key="'ms'+i" class="meld-chip">{{ meldText(m) }}</span>
-              </span>
+              <div class="value melds-value" v-if="meldsSelf.length">
+                <div
+                  v-for="(m,i) in meldsSelf"
+                  :key="'ms'+i"
+                  :class="['meld-card', meldKindClass(m.kind), 'self']"
+                >
+                  <span class="meld-kind">{{ kindText(m.kind) }}</span>
+                  <div class="meld-tiles">
+                    <span
+                      v-for="(t,j) in m.tiles"
+                      :key="`mst${i}-${j}`"
+                      class="tile tile-small meld-tile"
+                      :title="t2s(t)"
+                    >
+                      <img :src="tileImage(t)" :alt="t2s(t)" class="tile-face" />
+                    </span>
+                  </div>
+                </div>
+              </div>
               <span class="value" v-else>暂无</span>
             </div>
             <div class="info-row">
@@ -285,8 +316,12 @@ function kindText(k:string){
   if(k==='kong') return '杠'
   return k
 }
-function meldText(m:Meld){
-  return `${kindText(m.kind)}：${m.tiles.map(t2s).join('')}`
+function meldKindClass(kind: string){
+  if(kind==='pong') return 'meld-card--pong'
+  if(kind==='chow') return 'meld-card--chow'
+  if(kind==='kong') return 'meld-card--kong'
+  if(kind==='hu') return 'meld-card--hu'
+  return 'meld-card--other'
 }
 function actText(a:Action){
   if(a.type==='discard') return `打出 ${t2s(a.tile)}`
@@ -465,7 +500,7 @@ function findAddedIndexForTile(newHand:number[], oldHand:number[], tile:number):
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  padding: 48px 16px 64px;
+  padding: 16px 16px 64px;
   box-sizing: border-box;
 }
 
@@ -835,13 +870,79 @@ function findAddedIndexForTile(newHand:number[], oldHand:number[], tile:number):
   transform: scale(0.95);
 }
 
-.meld-chip {
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: rgba(101, 130, 255, 0.2);
-  color: #d6e3ff;
-  font-size: 0.9rem;
-  letter-spacing: 0.04em;
+.melds-value {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.meld-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(143, 165, 255, 0.25);
+  background: rgba(35, 48, 86, 0.6);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.meld-card.self {
+  border-color: rgba(248, 219, 129, 0.35);
+  background: rgba(48, 62, 96, 0.7);
+}
+
+.meld-kind {
+  min-width: 36px;
+  padding: 4px 10px;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-align: center;
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.25);
+}
+
+.meld-card--pong .meld-kind {
+  background: linear-gradient(135deg, #5f8cff, #6ba0ff);
+  color: #f3f6ff;
+}
+
+.meld-card--chow .meld-kind {
+  background: linear-gradient(135deg, #67e3c3, #4bc49a);
+  color: #083b2e;
+}
+
+.meld-card--kong .meld-kind {
+  background: linear-gradient(135deg, #ffb34d, #ff805e);
+  color: #3d2206;
+}
+
+.meld-card--hu .meld-kind {
+  background: linear-gradient(135deg, #d77bff, #8e5bff);
+  color: #22043b;
+}
+
+.meld-card--other .meld-kind {
+  background: linear-gradient(135deg, #8f9bbe, #5e6c96);
+  color: #101630;
+}
+
+.meld-tiles {
+  display: flex;
+  gap: 6px;
+}
+
+.meld-tile {
+  min-width: 40px;
+  height: 60px;
+  padding: 2px 4px;
+  border-radius: 10px;
+  box-shadow: 0 10px 18px rgba(5, 9, 18, 0.35);
+}
+
+.meld-tile .tile-face {
+  transform: scale(0.92);
 }
 
 .tile-row {
