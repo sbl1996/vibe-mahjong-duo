@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
-import json, asyncio, time, random
+import json, asyncio, random
 from typing import Dict, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from fastapi.staticfiles import StaticFiles
 from rules_core import *
 
+
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="../frontend/dist", html=True), name="static")
+
 
 class Session:
     def __init__(self, ws: WebSocket):

@@ -210,10 +210,10 @@ function tileImage(t:number){
   const rank = (t % 9) + 1
   const suitIndex = Math.floor(t / 9)
   const suitCode = suitAssetCodes[suitIndex] ?? 'm'
-  return `/f${rank}${suitCode}.png`
+  return `/static/f${rank}${suitCode}.png`
 }
 
-const tileBackImage = '/flat_back.png'
+const tileBackImage = '/static/flat_back.png'
 
 // 监控手牌变化，手动同步时清除高亮
 watch(hand, (newHand, oldHand) => {
