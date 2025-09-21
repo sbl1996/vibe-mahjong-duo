@@ -14,7 +14,7 @@
           <div class="status-line" v-if="connected && status.players">
               <span>
                 {{ onlineSummary }} ｜座位 {{ seat ?? '?' }}｜对手 {{ opponent || '?' }}
-                <template v-if="readyStatus">｜准备 {{ readySummary }}</template>
+                <template v-if="!gameInProgress && readyStatus">｜准备 {{ readySummary }}</template>
               </span>
             </div>
         </div>
@@ -31,7 +31,14 @@
         </div>
         <div class="action-group">
           <button class="primary" @click="connect" :disabled="connected">{{ connected ? '已连接' : '连接房间' }}</button>
-          <button class="secondary" @click="ready" :disabled="!connected">准备就绪</button>
+          <button
+            class="ready-button"
+            :class="{ ready: isReady }"
+            @click="ready"
+            :disabled="!connected || isReady"
+          >
+            {{ isReady ? '准备就绪' : '点击准备' }}
+          </button>
         </div>
       </section>
 
@@ -201,6 +208,18 @@ const readySummary = computed(() => {
     .map((key) => `座位${key}：${ready[key] ? '✔' : '…'}`)
     .join('｜')
 })
+const isReady = computed(() => {
+  if (!readyStatus.value || seat.value === null) return false
+  const seatKey = seat.value
+  if (Object.prototype.hasOwnProperty.call(readyStatus.value, seatKey)) {
+    return Boolean(readyStatus.value[seatKey])
+  }
+  const stringKey = String(seatKey)
+  if (Object.prototype.hasOwnProperty.call(readyStatus.value, stringKey)) {
+    return Boolean(readyStatus.value[stringKey])
+  }
+  return false
+})
 const oppHandPlaceholders = computed(() => Array.from({ length: oppHandCount.value }, () => null))
 
 const suitAssetCodes = ['m','s','p'] as const
@@ -300,6 +319,7 @@ function connect(){
       events.value = []
       actions.value = []
       gameInProgress.value = true
+      readyStatus.value = null
     }else if(msg.type==='you_are'){
       // 同步你和对方可见面板
       opponent.value = msg.opponent
@@ -348,6 +368,7 @@ function connect(){
       actions.value = []
       oppHandCount.value = 13
       gameInProgress.value = false
+      readyStatus.value = null
     }else if(msg.type==='error'){
       alert(`错误：${msg.detail}`)
     }
@@ -357,10 +378,14 @@ function connect(){
     ws.value=null
     gameInProgress.value = false
     oppHandCount.value = 13
+    readyStatus.value = null
   }
 }
 
-function ready(){ send({type:"ready"}) }
+function ready(){
+  if (!connected.value || isReady.value) return
+  send({type:"ready"})
+}
 
 function selectTile(index:number){
   const tile = hand.value[index]
@@ -567,6 +592,27 @@ function findAddedIndexForTile(newHand:number[], oldHand:number[], tile:number):
   cursor: not-allowed;
   box-shadow: none;
   transform: none;
+}
+
+.ready-button {
+  background: linear-gradient(135deg, #ff9559, #ff4b5c);
+  color: #ffffff;
+  box-shadow: 0 14px 28px rgba(255, 112, 92, 0.35);
+}
+
+.ready-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 32px rgba(255, 102, 82, 0.45);
+}
+
+.ready-button.ready {
+  background: linear-gradient(135deg, #45d07d, #24a65a);
+  box-shadow: 0 12px 26px rgba(58, 197, 120, 0.4);
+}
+
+.ready-button.ready:disabled {
+  opacity: 1;
+  cursor: default;
 }
 
 .primary {

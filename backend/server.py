@@ -2,12 +2,18 @@
 import json, asyncio, random
 from typing import Dict, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from rules_core import *
 
 
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="../frontend/dist", html=True), name="static")
+app.mount("/static", StaticFiles(directory="static", html=True), name="static")
+
+
+@app.get("/", include_in_schema=False)
+async def serve_index() -> FileResponse:
+    return FileResponse("static/index.html")
 
 
 class Session:
