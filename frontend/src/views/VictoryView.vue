@@ -65,7 +65,11 @@ const prettyResult = computed(() => (gameResult.value ? JSON.stringify(gameResul
 
 const winnerName = computed(() => {
   if (!gameResult.value) return '胜利结算'
-  if (gameResult.value.winner === seat.value) {
+  const winner = gameResult.value.winner
+  if (typeof winner !== 'number') {
+    return '本局流局'
+  }
+  if (winner === seat.value) {
     return `${nickname.value || '我方'} 获胜！`
   }
   return `${opponent.value || '对手'} 获胜`
@@ -79,13 +83,17 @@ const reasonDescription = computed(() => {
     const tileText = typeof result.tile === 'number' ? t2s(result.tile) : '未知牌'
     return `荣和 ${tileText}`
   }
+  if (result.reason === 'wall') return '牌墙摸尽（流局）'
   return result.reason || '未知原因'
 })
 
 const resultSummary = computed(() => {
   const result = gameResult.value
   if (!result) return '暂无'
-  const seatText = typeof result.winner === 'number' ? `座位 ${result.winner}` : '未知座位'
+  if (typeof result.winner !== 'number') {
+    return `流局 · ${reasonDescription.value}`
+  }
+  const seatText = `座位 ${result.winner}`
   return `${seatText} · ${reasonDescription.value}`
 })
 

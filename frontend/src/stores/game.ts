@@ -219,6 +219,17 @@ function connect() {
           oppHandCount.value = Math.max(0, oppHandCount.value - 1)
         }
       }
+      if (evv.type === 'peng' || evv.type === 'pong') {
+        if (evv.seat !== seat.value) {
+          oppHandCount.value = Math.max(0, oppHandCount.value - 2)
+        }
+      }
+      if (evv.type === 'kong') {
+        if (evv.seat !== seat.value) {
+          const deduction = evv.style === 'added' ? 1 : evv.style === 'concealed' ? 4 : 3
+          oppHandCount.value = Math.max(0, oppHandCount.value - deduction)
+        }
+      }
       if (evv.type === 'draw') {
         if (evv.seat === seat.value) {
           lastDrawnIndex.value = null

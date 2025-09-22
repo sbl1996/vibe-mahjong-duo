@@ -103,6 +103,10 @@ class Room:
         if not me: return
         # 如果需要摸牌（自己13张）
         if len(self.state.players[seat].hand)%3==1 and self.state.last_discard is None:
+            if not self.state.wall:
+                self.state = replace(self.state, ended=True)
+                await self.broadcast({"type":"game_end","result":{"reason":"wall"}})
+                return
             if lock_held:
                 self.state, tile = draw(self.state, seat)
             else:

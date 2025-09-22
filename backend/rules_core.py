@@ -174,7 +174,9 @@ def claim_peng(state: GameState, claimer: int, from_seat: int, tile: int) -> Gam
     ps[claimer] = replace(ps[claimer], hand=tuple(sort_hand(hand)), melds=tuple(melds))
     # 从对方弃牌末尾删除该 tile（仅展示用）
     opp_disc = list(ps[from_seat].discards)
-    if not opp_disc or opp_disc[-1] != tile: pass
+    if opp_disc and opp_disc[-1] == tile:
+        opp_disc.pop()
+        ps[from_seat] = replace(ps[from_seat], discards=tuple(opp_disc))
     st = replace(state, players=tuple(ps), last_discard=None, turn=claimer, step_no=state.step_no+1)
     return st
 
@@ -186,6 +188,10 @@ def claim_kong_exposed(state: GameState, claimer: int, from_seat: int, tile: int
     melds.append(Meld("kong_exposed", (tile, tile, tile, tile)))
     ps = list(state.players)
     ps[claimer] = replace(ps[claimer], hand=tuple(sort_hand(hand)), melds=tuple(melds))
+    opp_disc = list(ps[from_seat].discards)
+    if opp_disc and opp_disc[-1] == tile:
+        opp_disc.pop()
+        ps[from_seat] = replace(ps[from_seat], discards=tuple(opp_disc))
     st = replace(state, players=tuple(ps), last_discard=None, turn=claimer, step_no=state.step_no+1)
     return st
 
