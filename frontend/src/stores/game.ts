@@ -3,6 +3,17 @@ import { computed, ref, watch } from 'vue'
 export type Action = { type: string; tile?: number; style?: string }
 export type Meld = { kind: string; tiles: number[] }
 
+type FinalSeatView = {
+  hand: number[]
+  melds: Meld[]
+  discards: number[]
+}
+
+type FinalViewPayload = {
+  players: Record<string, FinalSeatView>
+  wall_remaining?: number[]
+}
+
 const nickname = ref('A')
 const roomId = ref('room1')
 const ws = ref<WebSocket | null>(null)
@@ -23,6 +34,7 @@ const oppHandCount = ref(13)
 const actions = ref<Action[]>([])
 const events = ref<any[]>([])
 const gameResult = ref<any | null>(null)
+const finalView = ref<FinalViewPayload | null>(null)
 
 const selectedHandIndex = ref<number | null>(null)
 const lastDrawnIndex = ref<number | null>(null)
@@ -63,6 +75,32 @@ const isReady = computed(() => {
   return false
 })
 const oppHandPlaceholders = computed(() => Array.from({ length: oppHandCount.value }, () => null))
+
+const finalHandSelf = computed<number[]>(() => {
+  if (!finalView.value || seat.value === null) return []
+  const entry = finalView.value.players[String(seat.value)]
+  return entry?.hand ?? []
+})
+
+const finalHandOpp = computed<number[]>(() => {
+  if (!finalView.value || seat.value === null) return []
+  const oppSeat = 1 - seat.value
+  const entry = finalView.value.players[String(oppSeat)]
+  return entry?.hand ?? []
+})
+
+const finalMeldsSelf = computed<Meld[]>(() => {
+  if (!finalView.value || seat.value === null) return []
+  const entry = finalView.value.players[String(seat.value)]
+  return entry?.melds ?? []
+})
+
+const finalMeldsOpp = computed<Meld[]>(() => {
+  if (!finalView.value || seat.value === null) return []
+  const oppSeat = 1 - seat.value
+  const entry = finalView.value.players[String(oppSeat)]
+  return entry?.melds ?? []
+})
 
 const suitAssetCodes = ['m', 's', 'p'] as const
 
@@ -212,6 +250,7 @@ function connect() {
       actions.value = []
       gameInProgress.value = true
       readyStatus.value = null
+      finalView.value = null
     } else if (msg.type === 'you_are') {
       opponent.value = msg.opponent
       hand.value = msg.hand || []
@@ -266,6 +305,7 @@ function connect() {
       }
     } else if (msg.type === 'game_end') {
       gameResult.value = msg.result
+      finalView.value = msg.final_view ?? null
       actions.value = []
       oppHandCount.value = 13
       gameInProgress.value = false
@@ -339,6 +379,7 @@ function resetState() {
   actions.value = []
   events.value = []
   gameResult.value = null
+  finalView.value = null
   selectedHandIndex.value = null
   lastDrawnIndex.value = null
   pendingDrawTile.value = null
@@ -398,6 +439,11 @@ export function useGameStore() {
     actions,
     events,
     gameResult,
+    finalView,
+    finalHandSelf,
+    finalHandOpp,
+    finalMeldsSelf,
+    finalMeldsOpp,
     selectedHandIndex,
     lastDrawnIndex,
     pendingDrawTile,

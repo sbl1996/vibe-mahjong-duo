@@ -60,6 +60,22 @@ class Room:
             "discards_opp": list(opp.discards),
         }
 
+    def _final_view_payload(self) -> dict:
+        if not self.state:
+            return {}
+        players = {}
+        for seat in (0, 1):
+            player = self.state.players[seat]
+            players[str(seat)] = {
+                "hand": list(player.hand),
+                "melds": self._serialize_melds(player.melds),
+                "discards": list(player.discards),
+            }
+        return {
+            "players": players,
+            "wall_remaining": list(self.state.wall),
+        }
+
     async def sync_player(self, seat: int):
         if not self.state: return
         sess = self.sess.get(seat)
@@ -105,7 +121,11 @@ class Room:
         if len(self.state.players[seat].hand)%3==1 and self.state.last_discard is None:
             if not self.state.wall:
                 self.state = replace(self.state, ended=True)
-                await self.broadcast({"type":"game_end","result":{"reason":"wall"}})
+                await self.broadcast({
+                    "type": "game_end",
+                    "result": {"reason": "wall"},
+                    "final_view": self._final_view_payload(),
+                })
                 return
             if lock_held:
                 self.state, tile = draw(self.state, seat)
@@ -220,7 +240,11 @@ async def ws_endpoint(ws: WebSocket):
                             # 自摸胡
                             if can_hu_four_plus_one(st.players[sess.seat].hand, st.players[sess.seat].melds):
                                 room.state = replace(st, ended=True)
-                                await room.broadcast({"type":"game_end","result":{"winner":sess.seat,"reason":"zimo"}})
+                                await room.broadcast({
+                                    "type": "game_end",
+                                    "result": {"winner": sess.seat, "reason": "zimo"},
+                                    "final_view": room._final_view_payload(),
+                                })
                             else:
                                 await sess.send({"type":"error","detail":"not hu"})
                         elif action.get("type") == "draw":
@@ -266,7 +290,11 @@ async def ws_endpoint(ws: WebSocket):
                             merged = tuple(sorted(st.players[sess.seat].hand + (tile,)))
                             if can_hu_four_plus_one(merged, st.players[sess.seat].melds):
                                 room.state = replace(st, ended=True)
-                                await room.broadcast({"type":"game_end","result":{"winner":sess.seat,"reason":"ron","tile":tile}})
+                                await room.broadcast({
+                                    "type": "game_end",
+                                    "result": {"winner": sess.seat, "reason": "ron", "tile": tile},
+                                    "final_view": room._final_view_payload(),
+                                })
                             else:
                                 await sess.send({"type":"error","detail":"not hu"})
                         else:

@@ -21,6 +21,44 @@
         </div>
       </div>
 
+      <div v-if="hasFinalHands" class="final-hands">
+        <section class="hand-section">
+          <header class="hand-header">
+            <h3>我的手牌</h3>
+            <small>{{ finalHandSelf.length }} 张</small>
+          </header>
+          <div class="hand-tiles">
+            <span
+              v-for="(t, i) in finalHandSelf"
+              :key="`fs${i}`"
+              class="tile tile-final"
+              :title="t2s(t)"
+            >
+              <img :src="tileImage(t)" :alt="t2s(t)" class="tile-face" />
+            </span>
+            <span v-if="!finalHandSelf.length" class="muted">暂无</span>
+          </div>
+        </section>
+        <section class="hand-section">
+          <header class="hand-header">
+            <h3>对手手牌</h3>
+            <small>{{ finalHandOpp.length }} 张</small>
+          </header>
+          <div class="hand-tiles">
+            <span
+              v-for="(t, i) in finalHandOpp"
+              :key="`fo${i}`"
+              class="tile tile-final"
+              :title="t2s(t)"
+            >
+              <img :src="tileImage(t)" :alt="t2s(t)" class="tile-face" />
+            </span>
+            <span v-if="!finalHandOpp.length" class="muted">暂无</span>
+          </div>
+        </section>
+      </div>
+      <p v-else class="final-hands-hint">暂无手牌结算信息，等待下一局。</p>
+
       <details class="raw-details">
         <summary>查看原始结算数据</summary>
         <pre>{{ prettyResult }}</pre>
@@ -56,6 +94,9 @@ const {
   opponent,
   nickname,
   t2s,
+  tileImage,
+  finalHandSelf,
+  finalHandOpp,
   ready,
   connected,
   gameInProgress,
@@ -96,6 +137,8 @@ const resultSummary = computed(() => {
   const seatText = `座位 ${result.winner}`
   return `${seatText} · ${reasonDescription.value}`
 })
+
+const hasFinalHands = computed(() => finalHandSelf.value.length > 0 || finalHandOpp.value.length > 0)
 
 watch(
   gameResult,
@@ -188,6 +231,74 @@ function backToJoin() {
   font-size: 1.1rem;
   font-weight: 600;
   color: #e6ecff;
+}
+
+.final-hands {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 18px;
+}
+
+.hand-section {
+  background: rgba(8, 14, 29, 0.9);
+  border: 1px solid rgba(96, 126, 216, 0.28);
+  border-radius: 18px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hand-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  color: #dde5ff;
+}
+
+.hand-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: 0.05em;
+}
+
+.hand-header small {
+  color: #93a8ff;
+}
+
+.hand-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 72px;
+}
+
+.tile-final {
+  width: 52px;
+  height: 76px;
+  border-radius: 12px;
+  background: linear-gradient(150deg, rgba(20, 30, 58, 0.95), rgba(10, 15, 32, 0.95));
+  border: 1px solid rgba(96, 126, 216, 0.35);
+  box-shadow:
+    0 10px 20px rgba(5, 10, 20, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+}
+
+.tile-face {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.final-hands-hint {
+  margin: 0;
+  color: #7d8fc4;
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
 }
 
 .raw-details summary {
