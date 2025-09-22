@@ -76,6 +76,29 @@ function tileImage(t: number) {
 
 const tileBackImage = '/static/flat_back.png'
 
+function resolveWebSocketUrl(): string {
+  const envUrl = import.meta.env.VITE_WS_URL
+  if (envUrl && envUrl.trim().length > 0) {
+    return envUrl
+  }
+
+  if (typeof window === 'undefined') {
+    return 'ws://127.0.0.1:8000/ws'
+  }
+
+  const { protocol, hostname, port } = window.location
+  const wsProtocol = protocol === 'https:' ? 'wss' : 'ws'
+  const formatHost = (host: string) => (host.includes(':') && !host.startsWith('[') ? `[${host}]` : host)
+  const safeHost = formatHost(hostname)
+
+  if (import.meta.env.DEV) {
+    return `${wsProtocol}://${safeHost}:8000/ws`
+  }
+
+  const portSegment = port ? `:${port}` : ''
+  return `${wsProtocol}://${safeHost}${portSegment}/ws`
+}
+
 watch(
   hand,
   (newHand, oldHand) => {
@@ -170,7 +193,7 @@ function actText(a: Action) {
 
 function connect() {
   if (ws.value) return
-  ws.value = new WebSocket(`ws://127.0.0.1:8000/ws`)
+  ws.value = new WebSocket(resolveWebSocketUrl())
   ws.value.onopen = () => {
     connected.value = true
     send({ type: 'join_room', room_id: roomId.value, nickname: nickname.value })
