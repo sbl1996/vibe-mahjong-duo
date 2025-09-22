@@ -36,10 +36,15 @@
                   <span
                     v-for="(t, j) in m.tiles"
                     :key="`mot${i}-${j}`"
-                    class="tile tile-small meld-tile"
-                    :title="t2s(t)"
+                    :class="['tile', 'tile-small', 'meld-tile', { 'tile-hidden': t === null }]"
+                    :title="t === null ? '' : t2s(t)"
+                    :aria-hidden="t === null ? 'true' : undefined"
                   >
-                    <img :src="tileImage(t)" :alt="t2s(t)" class="tile-face" />
+                    <img
+                      :src="t === null ? tileBackImage : tileImage(t)"
+                      :alt="t === null ? '' : t2s(t)"
+                      class="tile-face"
+                    />
                   </span>
                 </div>
               </div>
@@ -99,10 +104,15 @@
                   <span
                     v-for="(t, j) in m.tiles"
                     :key="`mst${i}-${j}`"
-                    class="tile tile-small meld-tile"
-                    :title="t2s(t)"
+                    :class="['tile', 'tile-small', 'meld-tile', { 'tile-hidden': t === null }]"
+                    :title="t === null ? '' : t2s(t)"
+                    :aria-hidden="t === null ? 'true' : undefined"
                   >
-                    <img :src="tileImage(t)" :alt="t2s(t)" class="tile-face" />
+                    <img
+                      :src="t === null ? tileBackImage : tileImage(t)"
+                      :alt="t === null ? '' : t2s(t)"
+                      class="tile-face"
+                    />
                   </span>
                 </div>
               </div>

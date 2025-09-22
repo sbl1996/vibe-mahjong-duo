@@ -44,8 +44,16 @@ class Room:
             except:
                 pass
 
-    def _serialize_melds(self, melds):
-        return [{"kind": m.kind, "tiles": list(m.tiles)} for m in melds]
+    def _serialize_melds(self, melds, *, reveal_hidden: bool):
+        serialized = []
+        for m in melds:
+            if m.kind == "kong_concealed" and not reveal_hidden:
+                # 对手不可见暗杠的具体牌
+                tiles = [None] * len(m.tiles)
+            else:
+                tiles = list(m.tiles)
+            serialized.append({"kind": m.kind, "tiles": tiles})
+        return serialized
 
     def _view_payload(self, seat: int) -> dict:
         if not self.state:
@@ -54,8 +62,8 @@ class Room:
         opp = self.state.players[1-seat]
         return {
             "hand": list(you.hand),
-            "melds_self": self._serialize_melds(you.melds),
-            "melds_opp": self._serialize_melds(opp.melds),
+            "melds_self": self._serialize_melds(you.melds, reveal_hidden=True),
+            "melds_opp": self._serialize_melds(opp.melds, reveal_hidden=False),
             "discards_self": list(you.discards),
             "discards_opp": list(opp.discards),
         }
@@ -71,7 +79,7 @@ class Room:
                 tiles = sort_hand(tiles + [bonus_tiles[seat]])
             players[str(seat)] = {
                 "hand": tiles,
-                "melds": self._serialize_melds(player.melds),
+                "melds": self._serialize_melds(player.melds, reveal_hidden=True),
                 "discards": list(player.discards),
             }
         return {
@@ -234,7 +242,10 @@ async def ws_endpoint(ws: WebSocket):
                                 room.state = kong_added(st, sess.seat, tile)
                             else:
                                 await sess.send({"type":"error","detail":"bad kong style"}); continue
-                            await room.broadcast({"type":"event","ev":{"type":"kong","style":style,"seat":sess.seat,"tile":tile}})
+                            ev_payload = {"type":"kong","style":style,"seat":sess.seat}
+                            if style != "concealed":
+                                ev_payload["tile"] = tile
+                            await room.broadcast({"type":"event","ev":ev_payload})
                             # 杠后继续摸牌
                             await room.sync_all()
                             await room.step_auto(lock_held=True)

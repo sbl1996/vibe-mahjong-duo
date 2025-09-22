@@ -1,7 +1,8 @@
 import { computed, ref, watch } from 'vue'
 
 export type Action = { type: string; tile?: number; style?: string }
-export type Meld = { kind: string; tiles: number[] }
+export type TileValue = number | null
+export type Meld = { kind: string; tiles: TileValue[] }
 
 type FinalSeatView = {
   hand: number[]
@@ -104,8 +105,8 @@ const finalMeldsOpp = computed<Meld[]>(() => {
 
 const suitAssetCodes = ['m', 's', 'p'] as const
 
-function tileImage(t: number) {
-  if (!Number.isFinite(t) || t < 0) return ''
+function tileImage(t: TileValue) {
+  if (typeof t !== 'number' || !Number.isFinite(t) || t < 0) return ''
   const rank = (t % 9) + 1
   const suitIndex = Math.floor(t / 9)
   const suitCode = suitAssetCodes[suitIndex] ?? 'm'
@@ -179,7 +180,8 @@ watch(discardActions, (newActions) => {
   }
 })
 
-function t2s(t: number) {
+function t2s(t: TileValue) {
+  if (typeof t !== 'number' || !Number.isFinite(t) || t < 0) return '未知'
   const suit = ['万', '条', '筒'][Math.floor(t / 9)]
   const r = (t % 9) + 1
   return `${r}${suit}`
