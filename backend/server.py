@@ -60,14 +60,17 @@ class Room:
             "discards_opp": list(opp.discards),
         }
 
-    def _final_view_payload(self) -> dict:
+    def _final_view_payload(self, bonus_tiles: Optional[Dict[int, int]] = None) -> dict:
         if not self.state:
             return {}
         players = {}
         for seat in (0, 1):
             player = self.state.players[seat]
+            tiles = list(player.hand)
+            if bonus_tiles and seat in bonus_tiles:
+                tiles = sort_hand(tiles + [bonus_tiles[seat]])
             players[str(seat)] = {
-                "hand": list(player.hand),
+                "hand": tiles,
                 "melds": self._serialize_melds(player.melds),
                 "discards": list(player.discards),
             }
@@ -293,7 +296,7 @@ async def ws_endpoint(ws: WebSocket):
                                 await room.broadcast({
                                     "type": "game_end",
                                     "result": {"winner": sess.seat, "reason": "ron", "tile": tile},
-                                    "final_view": room._final_view_payload(),
+                                    "final_view": room._final_view_payload({sess.seat: tile}),
                                 })
                             else:
                                 await sess.send({"type":"error","detail":"not hu"})

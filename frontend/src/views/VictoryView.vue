@@ -29,14 +29,37 @@
           </header>
           <div class="hand-tiles">
             <span
-              v-for="(t, i) in finalHandSelf"
+              v-for="(entry, i) in annotatedHandSelf"
               :key="`fs${i}`"
-              class="tile tile-final"
-              :title="t2s(t)"
+              :class="['tile', 'tile-final', { winning: entry.winning }]"
+              :title="t2s(entry.tile)"
             >
-              <img :src="tileImage(t)" :alt="t2s(t)" class="tile-face" />
+              <img :src="tileImage(entry.tile)" :alt="t2s(entry.tile)" class="tile-face" />
             </span>
             <span v-if="!finalHandSelf.length" class="muted">暂无</span>
+          </div>
+          <div class="melds-block">
+            <div class="melds-header">明面子</div>
+            <div class="melds-list" v-if="finalMeldsSelf.length">
+              <div
+                v-for="(m, i) in finalMeldsSelf"
+                :key="`fms${i}`"
+                :class="['meld-card', meldKindClass(m.kind), 'self']"
+              >
+                <span class="meld-kind">{{ kindText(m.kind) }}</span>
+                <div class="meld-tiles">
+                  <span
+                    v-for="(t, j) in m.tiles"
+                    :key="`fms-${i}-${j}`"
+                    class="tile tile-small meld-tile"
+                    :title="t2s(t)"
+                  >
+                    <img :src="tileImage(t)" :alt="t2s(t)" class="tile-face" />
+                  </span>
+                </div>
+              </div>
+            </div>
+            <span v-else class="muted">暂无</span>
           </div>
         </section>
         <section class="hand-section">
@@ -46,14 +69,37 @@
           </header>
           <div class="hand-tiles">
             <span
-              v-for="(t, i) in finalHandOpp"
+              v-for="(entry, i) in annotatedHandOpp"
               :key="`fo${i}`"
-              class="tile tile-final"
-              :title="t2s(t)"
+              :class="['tile', 'tile-final', { winning: entry.winning }]"
+              :title="t2s(entry.tile)"
             >
-              <img :src="tileImage(t)" :alt="t2s(t)" class="tile-face" />
+              <img :src="tileImage(entry.tile)" :alt="t2s(entry.tile)" class="tile-face" />
             </span>
             <span v-if="!finalHandOpp.length" class="muted">暂无</span>
+          </div>
+          <div class="melds-block">
+            <div class="melds-header">对手明面子</div>
+            <div class="melds-list" v-if="finalMeldsOpp.length">
+              <div
+                v-for="(m, i) in finalMeldsOpp"
+                :key="`fmo${i}`"
+                :class="['meld-card', meldKindClass(m.kind)]"
+              >
+                <span class="meld-kind">{{ kindText(m.kind) }}</span>
+                <div class="meld-tiles">
+                  <span
+                    v-for="(t, j) in m.tiles"
+                    :key="`fmo-${i}-${j}`"
+                    class="tile tile-small meld-tile"
+                    :title="t2s(t)"
+                  >
+                    <img :src="tileImage(t)" :alt="t2s(t)" class="tile-face" />
+                  </span>
+                </div>
+              </div>
+            </div>
+            <span v-else class="muted">暂无</span>
           </div>
         </section>
       </div>
@@ -97,6 +143,10 @@ const {
   tileImage,
   finalHandSelf,
   finalHandOpp,
+  finalMeldsSelf,
+  finalMeldsOpp,
+  meldKindClass,
+  kindText,
   ready,
   connected,
   gameInProgress,
@@ -139,6 +189,37 @@ const resultSummary = computed(() => {
 })
 
 const hasFinalHands = computed(() => finalHandSelf.value.length > 0 || finalHandOpp.value.length > 0)
+
+const winningSeat = computed(() => {
+  const winner = gameResult.value?.winner
+  return typeof winner === 'number' ? winner : null
+})
+
+const winningTile = computed(() => {
+  const result = gameResult.value
+  if (!result) return null
+  if (typeof result.tile === 'number') return result.tile
+  return null
+})
+
+function annotateHand(tiles: number[], seatId: number | null): Array<{ tile: number; winning: boolean }> {
+  if (!tiles.length) return []
+  const tile = winningTile.value
+  const targetSeat = winningSeat.value
+  let remainingHighlights = tile !== null && seatId !== null && targetSeat === seatId ? 1 : 0
+  return tiles.map((value) => {
+    const shouldHighlight = remainingHighlights > 0 && tile === value
+    if (shouldHighlight) {
+      remainingHighlights -= 1
+    }
+    return { tile: value, winning: shouldHighlight }
+  })
+}
+
+const opponentSeat = computed(() => (seat.value === null ? null : 1 - seat.value))
+
+const annotatedHandSelf = computed(() => annotateHand(finalHandSelf.value, seat.value))
+const annotatedHandOpp = computed(() => annotateHand(finalHandOpp.value, opponentSeat.value))
 
 watch(
   gameResult,
@@ -288,6 +369,13 @@ function backToJoin() {
   padding: 4px;
 }
 
+.tile-final.winning {
+  border-color: rgba(255, 210, 92, 0.9);
+  box-shadow:
+    0 12px 24px rgba(255, 210, 92, 0.45),
+    0 0 18px rgba(255, 194, 68, 0.75);
+}
+
 .tile-face {
   width: 100%;
   height: 100%;
@@ -299,6 +387,61 @@ function backToJoin() {
   color: #7d8fc4;
   font-size: 0.95rem;
   letter-spacing: 0.04em;
+}
+
+.melds-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.melds-header {
+  font-size: 0.95rem;
+  color: #9bb3ff;
+  letter-spacing: 0.04em;
+}
+
+.melds-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.meld-card {
+  background: rgba(12, 21, 43, 0.9);
+  border-radius: 16px;
+  padding: 12px 14px;
+  border: 1px solid rgba(94, 126, 212, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 150px;
+}
+
+.meld-card.self {
+  border-color: rgba(146, 181, 255, 0.55);
+}
+
+.meld-kind {
+  font-size: 0.9rem;
+  color: #d1deff;
+}
+
+.meld-tiles {
+  display: flex;
+  gap: 8px;
+}
+
+.meld-tile {
+  width: 42px;
+  height: 62px;
+  border-radius: 10px;
+  background: linear-gradient(145deg, rgba(24, 34, 62, 0.95), rgba(11, 16, 32, 0.95));
+  border: 1px solid rgba(96, 126, 216, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
 }
 
 .raw-details summary {
