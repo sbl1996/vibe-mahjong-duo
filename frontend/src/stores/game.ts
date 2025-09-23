@@ -366,6 +366,10 @@ function connect() {
       oppHandCount.value = typeof msg.opp_hand_count === 'number' ? msg.opp_hand_count : oppHandCount.value
       discSelf.value = msg.discards_self || []
       discOpp.value = msg.discards_opp || []
+      // 更新对手名字
+      if (msg.opponent) {
+        opponent.value = msg.opponent
+      }
       // 如果接收到 sync_view 消息，说明有游戏状态，设置为游戏进行中
       gameInProgress.value = true
     } else if (msg.type === 'choices') {

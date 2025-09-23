@@ -191,7 +191,12 @@ class Room:
         if not sess: return
         view = self._view_payload(seat)
         await sess.send({"type":"sync_hand","hand": view.get("hand", [])})
-        await sess.send({"type":"sync_view", **view})
+        # 在同步游戏状态时也要同步对手名字
+        await sess.send({
+            "type":"sync_view",
+            **view,
+            "opponent": getattr(self.opponent(seat), "nickname", "??"),
+        })
 
     async def sync_all(self):
         if not self.state: return

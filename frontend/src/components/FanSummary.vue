@@ -69,7 +69,19 @@ const shouldRender = computed(() => props.summary !== null && props.summary !== 
 
 const entries = computed<DisplayEntry[]>(() => {
   const players = props.summary?.players ?? {}
-  return [0, 1].map((seatId) => {
+  const seatValue = props.seat
+
+  // Determine display order: my team first, then opponent team
+  let displayOrder: number[]
+  if (seatValue === null) {
+    // If no seat assigned, use seat order
+    displayOrder = [0, 1]
+  } else {
+    // My team first, then opponent team
+    displayOrder = [seatValue, 1 - seatValue]
+  }
+
+  return displayOrder.map((seatId) => {
     const payload = players[String(seatId)] as FanPlayerScore | undefined
     const fanTotal = typeof payload?.fan_total === 'number' ? payload.fan_total : 0
     const netChange = typeof payload?.net_change === 'number' ? payload.net_change : 0
