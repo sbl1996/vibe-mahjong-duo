@@ -336,11 +336,22 @@ async def ws_endpoint(ws: WebSocket):
                         await sess.send({"type":"error","detail":"Room full"})
                         continue
 
-                # 检查重名限制
+                # 检查重名限制：不允许同一个房间有两个相同名字的玩家
                 for existing_seat, existing_nickname in room.player_names.items():
-                    if existing_nickname == sess.nickname and existing_seat != seat and existing_seat in room.sess:
-                        await sess.send({"type":"error","detail":"Nickname already taken by another player in this room"})
-                        continue
+                    if existing_nickname == sess.nickname and existing_seat != seat:
+                        if existing_seat in room.sess:
+                            # 如果同名玩家已经在线，踢掉他
+                            old_sess = room.sess[existing_seat]
+                            await old_sess.ws.close()
+                            del room.sess[existing_seat]
+                            if existing_seat in room.ready:
+                                room.ready[existing_seat] = False
+                            # 通知房间其他玩家有人被踢
+                            await room.broadcast({"type":"player_kicked","seat":existing_seat,"nickname":existing_nickname})
+                        else:
+                            # 如果同名玩家离线，不允许新玩家加入
+                            await sess.send({"type":"error","detail":"Nickname already taken by another player in this room"})
+                            continue
 
                 # 加入房间
                 room.sess[seat] = sess
@@ -352,9 +363,23 @@ async def ws_endpoint(ws: WebSocket):
                 if room.opponent(seat):
                     await room.broadcast({"type":"room_status","players":[0 in room.sess, 1 in room.sess]})
 
+                # 通知房间有玩家重新加入
+                await room.broadcast({"type":"player_reconnected","seat":seat,"nickname":sess.nickname})
+
                 # 如果房间有游戏状态，同步给重新加入的玩家
                 if room.state:
                     await room.sync_player(seat)
+                    # 如果游戏进行中且轮到该玩家，重新发送可执行操作
+                    if room.state and not room.state.ended and room.state.turn == seat:
+                        choices = legal_choices(room.state, seat)
+                        await sess.send({"type":"choices","actions":choices})
+                    # 如果是对家响应阶段，检查是否需要发送操作
+                    elif room.state and not room.state.ended and room.state.last_discard is not None:
+                        # 检查是否是对家的回合（可以响应）
+                        if room.state.turn == seat:
+                            choices = legal_choices(room.state, seat)
+                            if choices:
+                                await sess.send({"type":"choices","actions":choices})
 
             elif t == "ready":
                 if not sess.room: continue
@@ -482,5 +507,8 @@ async def ws_endpoint(ws: WebSocket):
                 r.ready = {0: False, 1: False}
                 # 清理玩家名称记录
                 r.player_names.clear()
+            # 通知房间玩家状态变化（包含在线/离线状态）
             await r.broadcast({"type":"room_status","players":[0 in r.sess, 1 in r.sess]})
             await r.broadcast({"type":"ready_status","ready":dict(r.ready)})
+            # 通知有玩家掉线
+            await r.broadcast({"type":"player_disconnected","seat":seat,"nickname":sess.nickname})

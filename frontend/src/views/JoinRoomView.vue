@@ -21,6 +21,9 @@
         >
           {{ isReady ? '准备就绪' : '点击准备' }}
         </button>
+        <button class="secondary" @click="clearRoomInfo">
+          清除记录
+        </button>
       </div>
     </section>
   </GameLayout>
@@ -35,7 +38,7 @@ import { useGameStore } from '../stores/game'
 const router = useRouter()
 const store = useGameStore()
 
-const { nickname, roomId, connected, isReady, connect, ready, gameInProgress, gameResult } = store
+const { nickname, roomId, connected, isReady, connect, ready, gameInProgress, gameResult, clearRoomInfo } = store
 
 watch(
   gameInProgress,

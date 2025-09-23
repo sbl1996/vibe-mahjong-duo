@@ -27,8 +27,12 @@ type FinalViewPayload = {
   wall_remaining?: number[]
 }
 
-const nickname = ref('A')
-const roomId = ref('room1')
+// 从localStorage恢复房间信息，方便重连
+const savedNickname = typeof localStorage !== 'undefined' ? localStorage.getItem('mahjong_nickname') : 'A'
+const savedRoomId = typeof localStorage !== 'undefined' ? localStorage.getItem('mahjong_room_id') : 'room1'
+
+const nickname = ref(savedNickname || 'A')
+const roomId = ref(savedRoomId || 'room1')
 const ws = ref<WebSocket | null>(null)
 const connected = ref(false)
 
@@ -308,11 +312,26 @@ function actText(a: Action) {
   return JSON.stringify(a)
 }
 
+function saveRoomInfo() {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem('mahjong_nickname', nickname.value)
+    localStorage.setItem('mahjong_room_id', roomId.value)
+  }
+}
+
+function clearRoomInfo() {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem('mahjong_nickname')
+    localStorage.removeItem('mahjong_room_id')
+  }
+}
+
 function connect() {
   if (ws.value) return
   ws.value = new WebSocket(resolveWebSocketUrl())
   ws.value.onopen = () => {
     connected.value = true
+    saveRoomInfo()
     send({ type: 'join_room', room_id: roomId.value, nickname: nickname.value })
   }
   ws.value.onmessage = (ev) => {
@@ -347,6 +366,8 @@ function connect() {
       oppHandCount.value = typeof msg.opp_hand_count === 'number' ? msg.opp_hand_count : oppHandCount.value
       discSelf.value = msg.discards_self || []
       discOpp.value = msg.discards_opp || []
+      // 如果接收到 sync_view 消息，说明有游戏状态，设置为游戏进行中
+      gameInProgress.value = true
     } else if (msg.type === 'choices') {
       actions.value = msg.actions || []
     } else if (msg.type === 'event') {
@@ -391,6 +412,20 @@ function connect() {
       readyStatus.value = null
     } else if (msg.type === 'error') {
       alert(`错误：${msg.detail}`)
+    } else if (msg.type === 'player_kicked') {
+      alert(`您被踢出房间，因为有其他玩家用了相同名字"${msg.nickname}"`)
+      clearRoomInfo()
+      connected.value = false
+      ws.value = null
+      gameInProgress.value = false
+      readyStatus.value = null
+      seat.value = null
+    } else if (msg.type === 'player_disconnected') {
+      // 可以在这里添加掉线提示
+      console.log(`玩家 ${msg.nickname} 掉线了`)
+    } else if (msg.type === 'player_reconnected') {
+      // 可以在这里添加重连提示
+      console.log(`玩家 ${msg.nickname} 重新连接了`)
     }
   }
   ws.value.onclose = () => {
@@ -553,5 +588,7 @@ export function useGameStore() {
     send,
     disconnect,
     resetState,
+    saveRoomInfo,
+    clearRoomInfo,
   }
 }
