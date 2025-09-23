@@ -43,39 +43,50 @@ def compute_score_summary(
         1: {"fan_total": 0, "fan_breakdown": []},
     }
 
-    for seat in (0, 1):
-        entry = player_scores[seat]
-        meld_counts = _collect_meld_counts(state.players[seat])
-        pong_count = meld_counts.get("pong", 0)
-        if pong_count:
-            _add_fan(entry, "碰", pong_count, f"{pong_count} 组碰牌，每组 +1 番")
-        exposed_kong = meld_counts.get("kong_exposed", 0)
-        if exposed_kong:
-            fan = exposed_kong * 2
-            _add_fan(entry, "明杠", fan, f"{exposed_kong} 组明杠，每组 +2 番")
-        added_kong = meld_counts.get("kong_added", 0)
-        if added_kong:
-            fan = added_kong * 2
-            _add_fan(entry, "加杠", fan, f"{added_kong} 次加杠，每次 +2 番")
-        concealed_kong = meld_counts.get("kong_concealed", 0)
-        if concealed_kong:
-            fan = concealed_kong * 3
-            _add_fan(entry, "暗杠", fan, f"{concealed_kong} 组暗杠，每组 +3 番")
-
     if winner is not None:
-        win_entry = player_scores[winner]
-        _add_fan(win_entry, "胡牌基础", 4, "胡牌基础番")
-        if reason == "zimo":
-            _add_fan(win_entry, "自摸", 2, "自摸额外奖励")
-        elif reason == "ron":
-            _add_fan(win_entry, "荣和", 1, "荣和他人弃牌")
+        win_player = state.players[winner]
 
+        # 检查役满
+        yakuman_fan = check_yakuman(win_player.hand, win_player.melds, reason)
+        if yakuman_fan > 0:
+            # 役满优先，固定8番
+            _add_fan(player_scores[winner], "役满", yakuman_fan, get_yakuman_description(win_player.hand, win_player.melds))
+        else:
+            # 普通番数计算
+            # 基础番
+            _add_fan(player_scores[winner], "和底", 1, "胡牌基础番")
+
+            # 行为与状态番
+            if reason == "zimo":
+                _add_fan(player_scores[winner], "自摸", 1, "自摸胡牌")
+
+            if is_menzen(win_player.hand, win_player.melds):
+                _add_fan(player_scores[winner], "门前清", 1, "没有碰、明杠")
+
+            # 牌型番
+            if is_all_triplets(win_player.hand, win_player.melds):
+                _add_fan(player_scores[winner], "对对胡", 2, "四个刻子+将眼")
+
+            concealed_triplets = count_concealed_triplets(win_player.hand, win_player.melds)
+            if concealed_triplets >= 3:
+                _add_fan(player_scores[winner], "三暗刻", 2, f"三个暗刻")
+
+            if is_full_flush(win_player.hand, win_player.melds):
+                _add_fan(player_scores[winner], "清一色", 5, "同花色牌型")
+
+            # 杠的番数（非役满时计算）
+            kong_count = count_kongs(win_player.melds)
+            if kong_count > 0:
+                _add_fan(player_scores[winner], "杠", kong_count, f"{kong_count}个杠")
+
+        # 计算负番
         loser = 1 - winner
-        if reason == "zimo":
-            _add_fan(player_scores[loser], "被自摸", -2, "被对手自摸，扣 2 番")
-        elif reason == "ron":
-            target = ron_from if ron_from is not None else loser
-            _add_fan(player_scores[target], "放铳", -2, "打出的牌被荣和，扣 2 番")
+        if yakuman_fan > 0:
+            # 役满时负番固定为8番
+            _add_fan(player_scores[loser], "役满负番", -yakuman_fan, "对手役满")
+        else:
+            win_fan = player_scores[winner]["fan_total"]
+            _add_fan(player_scores[loser], "负番", -win_fan, "对手胡牌")
 
     players_payload: Dict[str, Dict[str, Any]] = {}
     for seat in (0, 1):
@@ -119,6 +130,7 @@ class Room:
         self.ready = {0: False, 1: False}
         self.state: Optional[GameState] = None
         self.lock = asyncio.Lock()
+        self.player_names: Dict[int, str] = {}  # 座位对应的玩家名称
 
     def opponent(self, seat: int) -> Optional[Session]:
         return self.sess.get(1-seat)
@@ -294,21 +306,55 @@ async def ws_endpoint(ws: WebSocket):
                 rid = msg.get("room_id","default")
                 sess.nickname = msg.get("nickname","Anon")
                 room = rooms.setdefault(rid, Room(rid))
-                # 分配座位
-                if 0 not in room.sess:
-                    seat = 0
-                elif 1 not in room.sess:
-                    seat = 1
+
+                # 检查是否允许加入
+                # 1. 检查是否房间已满且没有掉线的同名额玩家
+                if len(room.sess) == 2:
+                    # 检查是否有掉线的同名额玩家
+                    seat_to_replace = None
+                    for seat, existing_nickname in room.player_names.items():
+                        if existing_nickname == sess.nickname and seat not in room.sess:
+                            seat_to_replace = seat
+                            break
+
+                    if seat_to_replace is not None:
+                        # 找到掉线的同名额玩家，允许顶替
+                        seat = seat_to_replace
+                        # 清理掉线玩家的ready状态
+                        if seat in room.ready:
+                            room.ready[seat] = False
+                    else:
+                        await sess.send({"type":"error","detail":"Room full and no matching offline player found"})
+                        continue
                 else:
-                    await sess.send({"type":"error","detail":"Room full"})
-                    continue
+                    # 分配新座位
+                    if 0 not in room.sess:
+                        seat = 0
+                    elif 1 not in room.sess:
+                        seat = 1
+                    else:
+                        await sess.send({"type":"error","detail":"Room full"})
+                        continue
+
+                # 检查重名限制
+                for existing_seat, existing_nickname in room.player_names.items():
+                    if existing_nickname == sess.nickname and existing_seat != seat and existing_seat in room.sess:
+                        await sess.send({"type":"error","detail":"Nickname already taken by another player in this room"})
+                        continue
+
+                # 加入房间
                 room.sess[seat] = sess
+                room.player_names[seat] = sess.nickname
                 sess.room, sess.seat = room, seat
                 room.ready[seat] = False
                 await sess.send({"type":"room_joined","room_id":rid,"seat":seat})
                 await room.broadcast({"type":"ready_status","ready":dict(room.ready)})
                 if room.opponent(seat):
                     await room.broadcast({"type":"room_status","players":[0 in room.sess, 1 in room.sess]})
+
+                # 如果房间有游戏状态，同步给重新加入的玩家
+                if room.state:
+                    await room.sync_player(seat)
 
             elif t == "ready":
                 if not sess.room: continue
@@ -422,15 +468,19 @@ async def ws_endpoint(ws: WebSocket):
                 await sess.send({"type":"error","detail":"unknown message type"})
 
     except WebSocketDisconnect:
-        # 简易处理：断线即移除
+        # 处理断线：保留玩家名称记录，允许重新加入
         r = sess.room
         seat = sess.seat
         if r and seat in r.sess:
             del r.sess[seat]
             if seat in r.ready:
                 r.ready[seat] = False
-            if len(r.sess) < 2:
+            # 保留 player_names 记录，允许重新加入
+            # 只有当两个玩家都断线时才重置游戏
+            if len(r.sess) == 0:
                 r.state = None
                 r.ready = {0: False, 1: False}
+                # 清理玩家名称记录
+                r.player_names.clear()
             await r.broadcast({"type":"room_status","players":[0 in r.sess, 1 in r.sess]})
             await r.broadcast({"type":"ready_status","ready":dict(r.ready)})

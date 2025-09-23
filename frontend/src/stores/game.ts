@@ -100,6 +100,7 @@ const liveFanSummary = computed<FanSummary>(() => {
 
   for (const seatId of seats) {
     let melds: Meld[] = []
+
     if (seatValue === null) {
       melds = seatId === 0 ? meldsSelf.value : meldsOpp.value
     } else if (seatId === seatValue) {
@@ -111,22 +112,11 @@ const liveFanSummary = computed<FanSummary>(() => {
     const entry = players[String(seatId)]
     if (!entry) continue
 
+    // 杠的番数（每个杠1番）
     const counts = collectMeldKindCounts(melds)
-    const pongCount = (counts['pong'] ?? 0) + (counts['peng'] ?? 0)
-    if (pongCount > 0) {
-      addFanSummaryEntry(entry, '碰', pongCount, `${pongCount} 组碰牌，每组 +1 番`)
-    }
-    const exposedKong = (counts['kong_exposed'] ?? 0) + (counts['kong'] ?? 0)
-    if (exposedKong > 0) {
-      addFanSummaryEntry(entry, '明杠', exposedKong * 2, `${exposedKong} 组明杠，每组 +2 番`)
-    }
-    const addedKong = counts['kong_added'] ?? 0
-    if (addedKong > 0) {
-      addFanSummaryEntry(entry, '加杠', addedKong * 2, `${addedKong} 次加杠，每次 +2 番`)
-    }
-    const concealedKong = counts['kong_concealed'] ?? 0
-    if (concealedKong > 0) {
-      addFanSummaryEntry(entry, '暗杠', concealedKong * 3, `${concealedKong} 组暗杠，每组 +3 番`)
+    const totalKongs = (counts['kong_exposed'] ?? 0) + (counts['kong_concealed'] ?? 0) + (counts['kong_added'] ?? 0)
+    if (totalKongs > 0) {
+      addFanSummaryEntry(entry, '杠', totalKongs, `${totalKongs}个杠，每个+1番`)
     }
   }
 

@@ -260,3 +260,118 @@ def legal_choices(state: GameState, seat: int) -> List[Dict]:
     if seat == state.turn and len(me.hand)%3==1:
         choices.append({"type":"draw"})
     return choices
+
+
+# 番数计算相关函数
+
+def check_yakuman(hand: Tuple[int, ...], melds: Tuple[Meld, ...], reason: str) -> int:
+    """检查役满，返回番数（8）或0"""
+    # 四暗刻
+    if is_four_concealed_triplets(hand, melds):
+        return 8
+
+    # 四杠
+    if is_four_kongs(melds):
+        return 8
+
+    # 清幺九
+    if is_all_terminals(hand, melds):
+        return 8
+
+    return 0
+
+
+def get_yakuman_description(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> str:
+    """获取役满描述"""
+    if is_four_concealed_triplets(hand, melds):
+        return "四暗刻"
+    elif is_four_kongs(melds):
+        return "四杠"
+    elif is_all_terminals(hand, melds):
+        return "清幺九"
+    return "役满"
+
+
+def is_four_concealed_triplets(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
+    """检查是否四暗刻"""
+    # 需要手牌中有四个暗刻（包括暗杠）
+    if len(melds) != 4:
+        return False
+
+    for meld in melds:
+        if meld.kind == "kong_exposed":
+            return False  # 有明杠不算暗刻
+        if meld.kind not in ["pong", "kong_concealed"]:
+            return False
+
+    return True
+
+
+def is_four_kongs(melds: Tuple[Meld, ...]) -> bool:
+    """检查是否四杠"""
+    if len(melds) != 4:
+        return False
+
+    kong_kinds = ["kong_exposed", "kong_concealed", "kong_added"]
+    return all(meld.kind in kong_kinds for meld in melds)
+
+
+def is_all_terminals(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
+    """检查是否清幺九（只有1和9的牌）"""
+    all_tiles = list(hand)
+    for meld in melds:
+        all_tiles.extend(meld.tiles)
+
+    for tile in all_tiles:
+        rank = tile % 9 + 1
+        if rank not in [1, 9]:
+            return False
+
+    return True
+
+
+def is_menzen(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
+    """检查是否门前清（没有碰、明杠）"""
+    for meld in melds:
+        if meld.kind in ["pong", "kong_exposed"]:
+            return False
+    return True
+
+
+def is_all_triplets(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
+    """检查是否对对胡（四个刻子+将眼）"""
+    if len(melds) != 4:
+        return False
+
+    # 所有melds必须是刻子或杠子
+    triplet_kinds = ["pong", "kong_exposed", "kong_concealed", "kong_added"]
+    return all(meld.kind in triplet_kinds for meld in melds)
+
+
+def count_concealed_triplets(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> int:
+    """计算暗刻数量"""
+    count = 0
+    for meld in melds:
+        if meld.kind in ["pong", "kong_concealed"]:
+            count += 1
+    return count
+
+
+def is_full_flush(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
+    """检查是否清一色"""
+    all_tiles = list(hand)
+    for meld in melds:
+        all_tiles.extend(meld.tiles)
+
+    if not all_tiles:
+        return False
+
+    # 检查是否所有牌都是同一花色
+    first_suit = all_tiles[0] // 9
+    return all(tile // 9 == first_suit for tile in all_tiles)
+
+
+def count_kongs(melds: Tuple[Meld, ...]) -> int:
+    """计算杠子数量"""
+    kong_kinds = ["kong_exposed", "kong_concealed", "kong_added"]
+    return sum(1 for meld in melds if meld.kind in kong_kinds)
