@@ -4,6 +4,18 @@ export type Action = { type: string; tile?: number; style?: string }
 export type TileValue = number | null
 export type Meld = { kind: string; tiles: TileValue[] }
 
+export type FanBreakdownItem = { name: string; fan: number; detail?: string }
+export type FanPlayerScore = {
+  fan_total: number
+  fan_breakdown: FanBreakdownItem[]
+  net_change: number
+}
+export type FanSummary = {
+  fan_unit: string
+  net_fan: number
+  players: Record<string, FanPlayerScore>
+}
+
 type FinalSeatView = {
   hand: number[]
   melds: Meld[]
@@ -77,6 +89,63 @@ const isReady = computed(() => {
 })
 const oppHandPlaceholders = computed(() => Array.from({ length: oppHandCount.value }, () => null))
 
+const liveFanSummary = computed<FanSummary>(() => {
+  const players: Record<string, FanPlayerScore> = {
+    '0': { fan_total: 0, fan_breakdown: [], net_change: 0 },
+    '1': { fan_total: 0, fan_breakdown: [], net_change: 0 },
+  }
+
+  const seatValue = seat.value
+  const seats = [0, 1] as const
+
+  for (const seatId of seats) {
+    let melds: Meld[] = []
+    if (seatValue === null) {
+      melds = seatId === 0 ? meldsSelf.value : meldsOpp.value
+    } else if (seatId === seatValue) {
+      melds = meldsSelf.value
+    } else if (seatId === 1 - seatValue) {
+      melds = meldsOpp.value
+    }
+
+    const entry = players[String(seatId)]
+    if (!entry) continue
+
+    const counts = collectMeldKindCounts(melds)
+    const pongCount = (counts['pong'] ?? 0) + (counts['peng'] ?? 0)
+    if (pongCount > 0) {
+      addFanSummaryEntry(entry, '碰', pongCount, `${pongCount} 组碰牌，每组 +1 番`)
+    }
+    const exposedKong = (counts['kong_exposed'] ?? 0) + (counts['kong'] ?? 0)
+    if (exposedKong > 0) {
+      addFanSummaryEntry(entry, '明杠', exposedKong * 2, `${exposedKong} 组明杠，每组 +2 番`)
+    }
+    const addedKong = counts['kong_added'] ?? 0
+    if (addedKong > 0) {
+      addFanSummaryEntry(entry, '加杠', addedKong * 2, `${addedKong} 次加杠，每次 +2 番`)
+    }
+    const concealedKong = counts['kong_concealed'] ?? 0
+    if (concealedKong > 0) {
+      addFanSummaryEntry(entry, '暗杠', concealedKong * 3, `${concealedKong} 组暗杠，每组 +3 番`)
+    }
+  }
+
+  const seat0Entry = players['0']
+  const seat1Entry = players['1']
+  const seat0Total = seat0Entry?.fan_total ?? 0
+  const seat1Total = seat1Entry?.fan_total ?? 0
+  let netFan = seat0Total - seat1Total
+  if (netFan < 0) netFan = 0
+  if (seat0Entry) seat0Entry.net_change = netFan
+  if (seat1Entry) seat1Entry.net_change = -netFan
+
+  return {
+    fan_unit: '番',
+    net_fan: netFan,
+    players,
+  }
+})
+
 const finalHandSelf = computed<number[]>(() => {
   if (!finalView.value || seat.value === null) return []
   const entry = finalView.value.players[String(seat.value)]
@@ -114,6 +183,24 @@ function tileImage(t: TileValue) {
 }
 
 const tileBackImage = '/static/flat_back.png'
+
+function collectMeldKindCounts(melds: Meld[]): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const meld of melds) {
+    const key = meld?.kind
+    if (!key) continue
+    counts[key] = (counts[key] ?? 0) + 1
+  }
+  return counts
+}
+
+function addFanSummaryEntry(entry: FanPlayerScore, name: string, fan: number, detail?: string) {
+  if (!Number.isFinite(fan) || fan === 0) return
+  const payload: FanBreakdownItem = { name, fan }
+  if (detail) payload.detail = detail
+  entry.fan_breakdown.push(payload)
+  entry.fan_total += fan
+}
 
 function resolveWebSocketUrl(): string {
   const envUrl = import.meta.env.VITE_WS_URL
@@ -456,6 +543,7 @@ export function useGameStore() {
     selectedDiscardAction,
     canDiscardSelected,
     showActionFooter,
+    liveFanSummary,
     onlineSummary,
     readySummary,
     isReady,

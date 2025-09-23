@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import json, asyncio, random
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +14,92 @@ app.mount("/static", StaticFiles(directory="static", html=True), name="static")
 @app.get("/", include_in_schema=False)
 async def serve_index() -> FileResponse:
     return FileResponse("static/index.html")
+
+
+def _collect_meld_counts(player: PlayerState) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for meld in player.melds:
+        counts[meld.kind] = counts.get(meld.kind, 0) + 1
+    return counts
+
+
+def _add_fan(entry: Dict[str, Any], name: str, fan: int, detail: Optional[str] = None) -> None:
+    item = {"name": name, "fan": fan}
+    if detail:
+        item["detail"] = detail
+    entry.setdefault("fan_breakdown", []).append(item)
+    entry["fan_total"] = entry.get("fan_total", 0) + fan
+
+
+def compute_score_summary(
+    state: GameState,
+    winner: Optional[int],
+    reason: str,
+    *,
+    ron_from: Optional[int] = None,
+) -> Dict[str, Any]:
+    player_scores: Dict[int, Dict[str, Any]] = {
+        0: {"fan_total": 0, "fan_breakdown": []},
+        1: {"fan_total": 0, "fan_breakdown": []},
+    }
+
+    for seat in (0, 1):
+        entry = player_scores[seat]
+        meld_counts = _collect_meld_counts(state.players[seat])
+        pong_count = meld_counts.get("pong", 0)
+        if pong_count:
+            _add_fan(entry, "碰", pong_count, f"{pong_count} 组碰牌，每组 +1 番")
+        exposed_kong = meld_counts.get("kong_exposed", 0)
+        if exposed_kong:
+            fan = exposed_kong * 2
+            _add_fan(entry, "明杠", fan, f"{exposed_kong} 组明杠，每组 +2 番")
+        added_kong = meld_counts.get("kong_added", 0)
+        if added_kong:
+            fan = added_kong * 2
+            _add_fan(entry, "加杠", fan, f"{added_kong} 次加杠，每次 +2 番")
+        concealed_kong = meld_counts.get("kong_concealed", 0)
+        if concealed_kong:
+            fan = concealed_kong * 3
+            _add_fan(entry, "暗杠", fan, f"{concealed_kong} 组暗杠，每组 +3 番")
+
+    if winner is not None:
+        win_entry = player_scores[winner]
+        _add_fan(win_entry, "胡牌基础", 4, "胡牌基础番")
+        if reason == "zimo":
+            _add_fan(win_entry, "自摸", 2, "自摸额外奖励")
+        elif reason == "ron":
+            _add_fan(win_entry, "荣和", 1, "荣和他人弃牌")
+
+        loser = 1 - winner
+        if reason == "zimo":
+            _add_fan(player_scores[loser], "被自摸", -2, "被对手自摸，扣 2 番")
+        elif reason == "ron":
+            target = ron_from if ron_from is not None else loser
+            _add_fan(player_scores[target], "放铳", -2, "打出的牌被荣和，扣 2 番")
+
+    players_payload: Dict[str, Dict[str, Any]] = {}
+    for seat in (0, 1):
+        entry = player_scores[seat]
+        players_payload[str(seat)] = {
+            "fan_total": entry["fan_total"],
+            "fan_breakdown": entry["fan_breakdown"],
+            "net_change": 0,
+        }
+
+    net_fan = 0
+    if winner is not None:
+        loser = 1 - winner
+        net_fan = player_scores[winner]["fan_total"] - player_scores[loser]["fan_total"]
+        if net_fan < 0:
+            net_fan = 0
+        players_payload[str(winner)]["net_change"] = net_fan
+        players_payload[str(loser)]["net_change"] = -net_fan
+
+    return {
+        "fan_unit": "番",
+        "net_fan": net_fan,
+        "players": players_payload,
+    }
 
 
 class Session:
@@ -102,25 +188,38 @@ class Room:
                 await self.sync_player(seat)
 
     async def try_start(self):
-        if len(self.sess)==2 and self.ready[0] and self.ready[1] and (self.state is None or self.state.ended):
-            seed = random.randint(1, 10**9)
-            self.state = init_game(seed)
-            await self.broadcast({
-                "type":"game_started",
-                "seed": seed,
+        if len(self.sess) != 2:
+            return
+        if not (self.ready.get(0) and self.ready.get(1)):
+            return
+
+        if self.state is not None and not getattr(self.state, "ended", False):
+            # 有未正常结束的旧对局，强制重置以允许重新开局
+            self.state = None
+
+        if self.state is not None and not getattr(self.state, "ended", False):
+            return
+
+        seed = random.randint(1, 10**9)
+        self.state = init_game(seed)
+        self.ready = {0: False, 1: False}
+
+        await self.broadcast({
+            "type":"game_started",
+            "seed": seed,
+        })
+        # 给两位下发各自可见信息
+        for seat, s in self.sess.items():
+            view = self._view_payload(seat)
+            await s.send({
+                "type":"you_are",
+                "seat": seat,
+                "nickname": s.nickname,
+                "opponent": getattr(self.opponent(seat), "nickname", "??"),
+                **view,
             })
-            # 给两位下发各自可见信息
-            for seat, s in self.sess.items():
-                view = self._view_payload(seat)
-                await s.send({
-                    "type":"you_are",
-                    "seat": seat,
-                    "nickname": s.nickname,
-                    "opponent": getattr(self.opponent(seat), "nickname", "??"),
-                    **view,
-                })
-            # 首回合：轮到0先摸
-            await self.step_auto()
+        # 首回合：轮到0先摸
+        await self.step_auto()
 
     async def step_auto(self, *, lock_held: bool = False):
         # 自动下发当前行动方的 choices；如需要先摸牌则服务器执行摸并广播
@@ -132,9 +231,10 @@ class Room:
         if len(self.state.players[seat].hand)%3==1 and self.state.last_discard is None:
             if not self.state.wall:
                 self.state = replace(self.state, ended=True)
+                score_summary = compute_score_summary(self.state, None, "wall")
                 await self.broadcast({
                     "type": "game_end",
-                    "result": {"reason": "wall"},
+                    "result": {"reason": "wall", "score": score_summary},
                     "final_view": self._final_view_payload(),
                 })
                 return
@@ -204,14 +304,16 @@ async def ws_endpoint(ws: WebSocket):
                     continue
                 room.sess[seat] = sess
                 sess.room, sess.seat = room, seat
+                room.ready[seat] = False
                 await sess.send({"type":"room_joined","room_id":rid,"seat":seat})
+                await room.broadcast({"type":"ready_status","ready":dict(room.ready)})
                 if room.opponent(seat):
                     await room.broadcast({"type":"room_status","players":[0 in room.sess, 1 in room.sess]})
 
             elif t == "ready":
                 if not sess.room: continue
                 sess.room.ready[sess.seat] = True
-                await sess.room.broadcast({"type":"ready_status","ready":sess.room.ready})
+                await sess.room.broadcast({"type":"ready_status","ready":dict(sess.room.ready)})
                 await sess.room.try_start()
 
             elif t == "act":
@@ -254,9 +356,10 @@ async def ws_endpoint(ws: WebSocket):
                             # 自摸胡
                             if can_hu_four_plus_one(st.players[sess.seat].hand, st.players[sess.seat].melds):
                                 room.state = replace(st, ended=True)
+                                score_summary = compute_score_summary(room.state, sess.seat, "zimo")
                                 await room.broadcast({
                                     "type": "game_end",
-                                    "result": {"winner": sess.seat, "reason": "zimo"},
+                                    "result": {"winner": sess.seat, "reason": "zimo", "score": score_summary},
                                     "final_view": room._final_view_payload(),
                                 })
                             else:
@@ -304,9 +407,10 @@ async def ws_endpoint(ws: WebSocket):
                             merged = tuple(sorted(st.players[sess.seat].hand + (tile,)))
                             if can_hu_four_plus_one(merged, st.players[sess.seat].melds):
                                 room.state = replace(st, ended=True)
+                                score_summary = compute_score_summary(room.state, sess.seat, "ron", ron_from=from_seat)
                                 await room.broadcast({
                                     "type": "game_end",
-                                    "result": {"winner": sess.seat, "reason": "ron", "tile": tile},
+                                    "result": {"winner": sess.seat, "reason": "ron", "tile": tile, "score": score_summary},
                                     "final_view": room._final_view_payload({sess.seat: tile}),
                                 })
                             else:
@@ -320,6 +424,13 @@ async def ws_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         # 简易处理：断线即移除
         r = sess.room
-        if r and sess.seat in r.sess:
-            del r.sess[sess.seat]
+        seat = sess.seat
+        if r and seat in r.sess:
+            del r.sess[seat]
+            if seat in r.ready:
+                r.ready[seat] = False
+            if len(r.sess) < 2:
+                r.state = None
+                r.ready = {0: False, 1: False}
             await r.broadcast({"type":"room_status","players":[0 in r.sess, 1 in r.sess]})
+            await r.broadcast({"type":"ready_status","ready":dict(r.ready)})

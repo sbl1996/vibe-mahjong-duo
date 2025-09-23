@@ -1,6 +1,15 @@
 <template>
   <GameLayout>
     <div v-if="connected" class="board">
+      <FanSummary
+        class="board-fan-summary"
+        :summary="liveFanSummary"
+        :seat="seat"
+        :nickname="nickname"
+        :opponent="opponent"
+        title="当前番数"
+        dense
+      />
       <section class="panel panel-opp">
         <header class="panel-head">
           <h3>对手桌面</h3>
@@ -165,6 +174,7 @@
 import { watch } from 'vue'
 import { useRouter } from 'vue-router'
 import GameLayout from '../components/GameLayout.vue'
+import FanSummary from '../components/FanSummary.vue'
 import { useGameStore } from '../stores/game'
 
 const router = useRouter()
@@ -172,6 +182,7 @@ const store = useGameStore()
 
 const {
   connected,
+  seat,
   opponent,
   nickname,
   oppHandPlaceholders,
@@ -197,6 +208,7 @@ const {
   actText,
   gameInProgress,
   gameResult,
+  liveFanSummary,
 } = store
 
 watch(
@@ -235,6 +247,10 @@ function goJoin() {
   flex-direction: column;
   gap: 24px;
   margin-top: 24px;
+}
+
+.board-fan-summary {
+  margin-bottom: 4px;
 }
 
 .panel {

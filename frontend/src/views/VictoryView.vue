@@ -21,6 +21,15 @@
         </div>
       </div>
 
+      <FanSummary
+        v-if="displayFanSummary"
+        :summary="displayFanSummary"
+        :seat="seat"
+        :nickname="nickname"
+        :opponent="opponent"
+        title="番数结算"
+      />
+
       <div v-if="hasFinalHands" class="final-hands">
         <section class="hand-section">
           <header class="hand-header">
@@ -129,6 +138,7 @@
 import { computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import GameLayout from '../components/GameLayout.vue'
+import FanSummary from '../components/FanSummary.vue'
 import { useGameStore } from '../stores/game'
 
 const router = useRouter()
@@ -150,6 +160,7 @@ const {
   ready,
   connected,
   gameInProgress,
+  liveFanSummary,
 } = store
 
 const prettyResult = computed(() => (gameResult.value ? JSON.stringify(gameResult.value, null, 2) : ''))
@@ -220,6 +231,9 @@ const opponentSeat = computed(() => (seat.value === null ? null : 1 - seat.value
 
 const annotatedHandSelf = computed(() => annotateHand(finalHandSelf.value, seat.value))
 const annotatedHandOpp = computed(() => annotateHand(finalHandOpp.value, opponentSeat.value))
+
+const scoreFromResult = computed(() => gameResult.value?.score ?? null)
+const displayFanSummary = computed(() => scoreFromResult.value ?? liveFanSummary.value)
 
 watch(
   gameResult,
