@@ -114,11 +114,6 @@
       </div>
       <p v-else class="final-hands-hint">暂无手牌结算信息，等待下一局。</p>
 
-      <details class="raw-details">
-        <summary>查看原始结算数据</summary>
-        <pre>{{ prettyResult }}</pre>
-      </details>
-
       <div class="victory-actions">
         <button class="primary" @click="backToJoin">返回准备</button>
         <button class="secondary" :disabled="!connected" @click="ready">
@@ -163,7 +158,6 @@ const {
   liveFanSummary,
 } = store
 
-const prettyResult = computed(() => (gameResult.value ? JSON.stringify(gameResult.value, null, 2) : ''))
 
 const winnerName = computed(() => {
   if (!gameResult.value) return '胜利结算'

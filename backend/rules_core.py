@@ -3,7 +3,7 @@
 # 胡牌：经典四面子一将（允许暗顺子）。实现 碰/杠/胡 的基本合法性检查。
 from __future__ import annotations
 from dataclasses import dataclass, replace
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Any
 import random
 from functools import lru_cache
 
@@ -375,3 +375,91 @@ def count_kongs(melds: Tuple[Meld, ...]) -> int:
     """计算杠子数量"""
     kong_kinds = ["kong_exposed", "kong_concealed", "kong_added"]
     return sum(1 for meld in melds if meld.kind in kong_kinds)
+
+
+def _add_fan(entry: Dict[str, Any], name: str, fan: int, detail: Optional[str] = None) -> None:
+    item = {"name": name, "fan": fan}
+    if detail:
+        item["detail"] = detail
+    entry.setdefault("fan_breakdown", []).append(item)
+    entry["fan_total"] = entry.get("fan_total", 0) + fan
+
+
+def compute_score_summary(
+    state: GameState,
+    winner: Optional[int],
+    reason: str,
+) -> Dict[str, Any]:
+    player_scores: Dict[int, Dict[str, Any]] = {
+        0: {"fan_total": 0, "fan_breakdown": []},
+        1: {"fan_total": 0, "fan_breakdown": []},
+    }
+
+    if winner is not None:
+        win_player = state.players[winner]
+
+        # 检查役满
+        yakuman_fan = check_yakuman(win_player.hand, win_player.melds, reason)
+        if yakuman_fan > 0:
+            # 役满优先，固定8番
+            _add_fan(player_scores[winner], "役满", yakuman_fan, get_yakuman_description(win_player.hand, win_player.melds))
+        else:
+            # 普通番数计算
+            # 基础番
+            _add_fan(player_scores[winner], "和底", 1, "胡牌基础番")
+
+            # 行为与状态番
+            if reason == "zimo":
+                _add_fan(player_scores[winner], "自摸", 1, "自摸胡牌")
+
+            if is_menzen(win_player.hand, win_player.melds):
+                _add_fan(player_scores[winner], "门前清", 1, "没有碰、明杠")
+
+            # 牌型番
+            if is_all_triplets(win_player.hand, win_player.melds):
+                _add_fan(player_scores[winner], "对对胡", 2, "四个刻子+将眼")
+
+            concealed_triplets = count_concealed_triplets(win_player.hand, win_player.melds)
+            if concealed_triplets >= 3:
+                _add_fan(player_scores[winner], "三暗刻", 2, f"三个暗刻")
+
+            if is_full_flush(win_player.hand, win_player.melds):
+                _add_fan(player_scores[winner], "清一色", 5, "同花色牌型")
+
+            # 杠的番数（非役满时计算）
+            kong_count = count_kongs(win_player.melds)
+            if kong_count > 0:
+                _add_fan(player_scores[winner], "杠", kong_count, f"{kong_count}个杠")
+
+        # 计算负番
+        loser = 1 - winner
+        if yakuman_fan > 0:
+            # 役满时负番固定为8番
+            _add_fan(player_scores[loser], "役满负番", -yakuman_fan, "对手役满")
+        else:
+            win_fan = player_scores[winner]["fan_total"]
+            _add_fan(player_scores[loser], "负番", -win_fan, "对手胡牌")
+
+    players_payload: Dict[str, Dict[str, Any]] = {}
+    for seat in (0, 1):
+        entry = player_scores[seat]
+        players_payload[str(seat)] = {
+            "fan_total": entry["fan_total"],
+            "fan_breakdown": entry["fan_breakdown"],
+            "net_change": 0,
+        }
+
+    net_fan = 0
+    if winner is not None:
+        loser = 1 - winner
+        net_fan = player_scores[winner]["fan_total"] - player_scores[loser]["fan_total"]
+        if net_fan < 0:
+            net_fan = 0
+        players_payload[str(winner)]["net_change"] = net_fan
+        players_payload[str(loser)]["net_change"] = -net_fan
+
+    return {
+        "fan_unit": "番",
+        "net_fan": net_fan,
+        "players": players_payload,
+    }

@@ -7,16 +7,25 @@
         </div>
         <div class="header-status">
           <div class="status-line">
-            <span class="status-dot" :class="connected ? 'online' : 'offline'"></span>
-            <span>
-              {{ connected ? '已连接' : '未连接' }}
-              <template v-if="connected && status.players">
-                ｜{{ onlineSummary }} ｜座位 {{ seat ?? '?' }}｜对手 {{ opponent || '?' }}
+            <span v-if="connected">
+              <template v-if="status.players">
+                座位 {{ seat ?? '?' }}｜对手 {{ opponent || '?' }}
+                <span class="player-status">
+                  <span class="player-status-item">
+                    <span class="status-dot" :class="status.players[seat === 0 ? 0 : 1] ? 'online' : 'offline'"></span>
+                    <span>我方</span>
+                  </span>
+                  <span class="player-status-item">
+                    <span class="status-dot" :class="status.players[seat === 0 ? 1 : 0] ? 'online' : 'offline'"></span>
+                    <span>对方</span>
+                  </span>
+                </span>
                 <template v-if="!gameInProgress && readyStatus">
                   ｜准备 {{ readySummary }}
                 </template>
               </template>
             </span>
+            <span v-else>未连接</span>
           </div>
         </div>
       </header>
@@ -32,7 +41,6 @@ import { useGameStore } from '../stores/game'
 const {
   connected,
   status,
-  onlineSummary,
   seat,
   opponent,
   gameInProgress,
@@ -129,6 +137,24 @@ const {
 .status-dot.offline {
   background: #ff6c6c;
   box-shadow: 0 0 16px rgba(255, 108, 108, 0.75);
+}
+
+.player-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: 8px;
+}
+
+.player-status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.player-status-item .status-dot {
+  width: 10px;
+  height: 10px;
 }
 
 .connection-card {

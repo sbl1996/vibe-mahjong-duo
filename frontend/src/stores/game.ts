@@ -70,7 +70,10 @@ const showActionFooter = computed(() => visibleActions.value.length > 0 || disca
 const onlineSummary = computed(() => {
   const players = status.value?.players
   if (!players || !Array.isArray(players)) return '未知'
-  return players.map((p: boolean, idx: number) => `座位${idx}：${p ? '在线' : '离线'}`).join('｜')
+  return players.map((p: boolean, idx: number) => {
+    const label = idx === seat.value ? '我方' : '对方'
+    return `${label}：${p ? '在线' : '离线'}`
+  }).join('｜')
 })
 const readySummary = computed(() => {
   const ready = readyStatus.value
@@ -166,17 +169,26 @@ const finalMeldsOpp = computed<Meld[]>(() => {
   return entry?.melds ?? []
 })
 
-const suitAssetCodes = ['m', 's', 'p'] as const
+const suitAssetCodes = ['m', 's', 'p', 'z'] as const
 
 function tileImage(t: TileValue) {
   if (typeof t !== 'number' || !Number.isFinite(t) || t < 0) return ''
-  const rank = (t % 9) + 1
-  const suitIndex = Math.floor(t / 9)
-  const suitCode = suitAssetCodes[suitIndex] ?? 'm'
-  return `/static/f${rank}${suitCode}.png`
+
+  // For regular suits (m/s/p): tiles 0-26 (0-8: m, 9-17: s, 18-26: p)
+  // For honor suit (z): tiles 27-33 (1-7: z)
+  if (t < 27) {
+    const rank = t % 9
+    const suitIndex = Math.floor(t / 9)
+    const suitCode = suitAssetCodes[suitIndex] ?? 'm'
+    return `/f${rank + 1}${suitCode}.png`
+  } else {
+    // Honor tiles
+    const rank = (t - 27) + 1  // 1-7
+    return `/f${rank}z.png`
+  }
 }
 
-const tileBackImage = '/static/flat_back.png'
+const tileBackImage = '/flat_back.png'
 
 function collectMeldKindCounts(melds: Meld[]): Record<string, number> {
   const counts: Record<string, number> = {}
@@ -416,6 +428,11 @@ function connect() {
       readyStatus.value = null
     } else if (msg.type === 'error') {
       alert(`错误：${msg.detail}`)
+      if (msg.detail.includes('Nickname is already in use') || msg.detail.includes('Nickname already taken')) {
+        // 昵称被占用，清除本地存储的房间信息
+        clearRoomInfo()
+        resetState()
+      }
     } else if (msg.type === 'player_kicked') {
       alert(`您被踢出房间，因为有其他玩家用了相同名字"${msg.nickname}"`)
       clearRoomInfo()
@@ -430,6 +447,10 @@ function connect() {
     } else if (msg.type === 'player_reconnected') {
       // 可以在这里添加重连提示
       console.log(`玩家 ${msg.nickname} 重新连接了`)
+    } else if (msg.type === 'mutual_replacement_completed') {
+      // 双方相互顶替重连完成
+      console.log('双方相互顶替重连完成，座位和手牌已交换')
+      // 座位和手牌交换会在 sync_view 消息中自动处理
     }
   }
   ws.value.onclose = () => {

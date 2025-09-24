@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import json, asyncio, random
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -8,109 +8,6 @@ from rules_core import *
 
 
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="static", html=True), name="static")
-
-
-@app.get("/", include_in_schema=False)
-async def serve_index() -> FileResponse:
-    return FileResponse("static/index.html")
-
-
-def _collect_meld_counts(player: PlayerState) -> Dict[str, int]:
-    counts: Dict[str, int] = {}
-    for meld in player.melds:
-        counts[meld.kind] = counts.get(meld.kind, 0) + 1
-    return counts
-
-
-def _add_fan(entry: Dict[str, Any], name: str, fan: int, detail: Optional[str] = None) -> None:
-    item = {"name": name, "fan": fan}
-    if detail:
-        item["detail"] = detail
-    entry.setdefault("fan_breakdown", []).append(item)
-    entry["fan_total"] = entry.get("fan_total", 0) + fan
-
-
-def compute_score_summary(
-    state: GameState,
-    winner: Optional[int],
-    reason: str,
-    *,
-    ron_from: Optional[int] = None,
-) -> Dict[str, Any]:
-    player_scores: Dict[int, Dict[str, Any]] = {
-        0: {"fan_total": 0, "fan_breakdown": []},
-        1: {"fan_total": 0, "fan_breakdown": []},
-    }
-
-    if winner is not None:
-        win_player = state.players[winner]
-
-        # 检查役满
-        yakuman_fan = check_yakuman(win_player.hand, win_player.melds, reason)
-        if yakuman_fan > 0:
-            # 役满优先，固定8番
-            _add_fan(player_scores[winner], "役满", yakuman_fan, get_yakuman_description(win_player.hand, win_player.melds))
-        else:
-            # 普通番数计算
-            # 基础番
-            _add_fan(player_scores[winner], "和底", 1, "胡牌基础番")
-
-            # 行为与状态番
-            if reason == "zimo":
-                _add_fan(player_scores[winner], "自摸", 1, "自摸胡牌")
-
-            if is_menzen(win_player.hand, win_player.melds):
-                _add_fan(player_scores[winner], "门前清", 1, "没有碰、明杠")
-
-            # 牌型番
-            if is_all_triplets(win_player.hand, win_player.melds):
-                _add_fan(player_scores[winner], "对对胡", 2, "四个刻子+将眼")
-
-            concealed_triplets = count_concealed_triplets(win_player.hand, win_player.melds)
-            if concealed_triplets >= 3:
-                _add_fan(player_scores[winner], "三暗刻", 2, f"三个暗刻")
-
-            if is_full_flush(win_player.hand, win_player.melds):
-                _add_fan(player_scores[winner], "清一色", 5, "同花色牌型")
-
-            # 杠的番数（非役满时计算）
-            kong_count = count_kongs(win_player.melds)
-            if kong_count > 0:
-                _add_fan(player_scores[winner], "杠", kong_count, f"{kong_count}个杠")
-
-        # 计算负番
-        loser = 1 - winner
-        if yakuman_fan > 0:
-            # 役满时负番固定为8番
-            _add_fan(player_scores[loser], "役满负番", -yakuman_fan, "对手役满")
-        else:
-            win_fan = player_scores[winner]["fan_total"]
-            _add_fan(player_scores[loser], "负番", -win_fan, "对手胡牌")
-
-    players_payload: Dict[str, Dict[str, Any]] = {}
-    for seat in (0, 1):
-        entry = player_scores[seat]
-        players_payload[str(seat)] = {
-            "fan_total": entry["fan_total"],
-            "fan_breakdown": entry["fan_breakdown"],
-            "net_change": 0,
-        }
-
-    net_fan = 0
-    if winner is not None:
-        loser = 1 - winner
-        net_fan = player_scores[winner]["fan_total"] - player_scores[loser]["fan_total"]
-        if net_fan < 0:
-            net_fan = 0
-        players_payload[str(winner)]["net_change"] = net_fan
-        players_payload[str(loser)]["net_change"] = -net_fan
-
-    return {
-        "fan_unit": "番",
-        "net_fan": net_fan,
-        "players": players_payload,
-    }
 
 
 class Session:
@@ -204,6 +101,7 @@ class Room:
             if seat in self.sess:
                 await self.sync_player(seat)
 
+
     async def try_start(self):
         if len(self.sess) != 2:
             return
@@ -213,9 +111,6 @@ class Room:
         if self.state is not None and not getattr(self.state, "ended", False):
             # 有未正常结束的旧对局，强制重置以允许重新开局
             self.state = None
-
-        if self.state is not None and not getattr(self.state, "ended", False):
-            return
 
         seed = random.randint(1, 10**9)
         self.state = init_game(seed)
@@ -323,11 +218,9 @@ async def ws_endpoint(ws: WebSocket):
                             break
 
                     if seat_to_replace is not None:
-                        # 找到掉线的同名额玩家，允许顶替
+                        # 找到掉线的同名额玩家，允许重连
                         seat = seat_to_replace
-                        # 清理掉线玩家的ready状态
-                        if seat in room.ready:
-                            room.ready[seat] = False
+
                     else:
                         await sess.send({"type":"error","detail":"Room full and no matching offline player found"})
                         continue
@@ -345,14 +238,9 @@ async def ws_endpoint(ws: WebSocket):
                 for existing_seat, existing_nickname in room.player_names.items():
                     if existing_nickname == sess.nickname and existing_seat != seat:
                         if existing_seat in room.sess:
-                            # 如果同名玩家已经在线，踢掉他
-                            old_sess = room.sess[existing_seat]
-                            await old_sess.ws.close()
-                            del room.sess[existing_seat]
-                            if existing_seat in room.ready:
-                                room.ready[existing_seat] = False
-                            # 通知房间其他玩家有人被踢
-                            await room.broadcast({"type":"player_kicked","seat":existing_seat,"nickname":existing_nickname})
+                            # 如果同名玩家已经在线，不允许新玩家加入并提示昵称已被使用
+                            await sess.send({"type":"error","detail":"Nickname is already in use by another player in this room"})
+                            continue
                         else:
                             # 如果同名玩家离线，不允许新玩家加入
                             await sess.send({"type":"error","detail":"Nickname already taken by another player in this room"})
@@ -387,7 +275,7 @@ async def ws_endpoint(ws: WebSocket):
                                 await sess.send({"type":"choices","actions":choices})
 
             elif t == "ready":
-                if not sess.room: continue
+                if not sess.room or sess.seat is None: continue
                 sess.room.ready[sess.seat] = True
                 await sess.room.broadcast({"type":"ready_status","ready":dict(sess.room.ready)})
                 await sess.room.try_start()
@@ -517,3 +405,11 @@ async def ws_endpoint(ws: WebSocket):
             await r.broadcast({"type":"ready_status","ready":dict(r.ready)})
             # 通知有玩家掉线
             await r.broadcast({"type":"player_disconnected","seat":seat,"nickname":sess.nickname})
+
+
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
+
+@app.get("/", include_in_schema=False)
+async def serve_index() -> FileResponse:
+    return FileResponse("static/index.html")
