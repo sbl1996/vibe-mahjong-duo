@@ -1,5 +1,11 @@
 import { computed, ref, watch } from 'vue'
 
+export type User = {
+  id: number
+  username: string
+  score: number
+}
+
 export type Action = { type: string; tile?: number; style?: string }
 export type TileValue = number | null
 export type Meld = { kind: string; tiles: TileValue[] }
@@ -27,14 +33,22 @@ type FinalViewPayload = {
   wall_remaining?: number[]
 }
 
-// 从localStorage恢复房间信息，方便重连
-const savedNickname = typeof localStorage !== 'undefined' ? localStorage.getItem('mahjong_nickname') : 'A'
+// 从localStorage恢复用户信息和房间信息
+const savedUser = typeof localStorage !== 'undefined' ? localStorage.getItem('mahjong_user') : null
 const savedRoomId = typeof localStorage !== 'undefined' ? localStorage.getItem('mahjong_room_id') : 'room1'
 
-const nickname = ref(savedNickname || 'A')
+const user = ref<User | null>(savedUser ? (JSON.parse(savedUser) as User) : null)
+const username = ref(user.value?.username || '')
+const nickname = ref(user.value?.username || '')
+
+watch(username, (newUsername) => {
+  nickname.value = newUsername
+})
+const userScore = ref(user.value?.score || 1000)
 const roomId = ref(savedRoomId || 'room1')
 const ws = ref<WebSocket | null>(null)
 const connected = ref(false)
+const autoReadyRequested = ref(false)
 
 const seat = ref<number | null>(null)
 const opponent = ref('')
@@ -208,14 +222,20 @@ function addFanSummaryEntry(entry: FanPlayerScore, name: string, fan: number, de
   entry.fan_total += fan
 }
 
-function resolveWebSocketUrl(): string {
+function resolveWebSocketUrl(auth: boolean = true): string {
   const envUrl = import.meta.env.VITE_WS_URL
   if (envUrl && envUrl.trim().length > 0) {
-    return envUrl
+    const trimmed = envUrl.trim()
+    if (!auth) return trimmed
+
+    // Ensure authenticated websocket URLs include the /auth suffix
+    if (trimmed.endsWith('/auth')) return trimmed
+    if (trimmed.endsWith('/')) return `${trimmed}auth`
+    return `${trimmed}/auth`
   }
 
   if (typeof window === 'undefined') {
-    return 'ws://127.0.0.1:8000/ws'
+    return `ws://127.0.0.1:8000/ws${auth ? '/auth' : ''}`
   }
 
   const { protocol, hostname, port } = window.location
@@ -224,11 +244,11 @@ function resolveWebSocketUrl(): string {
   const safeHost = formatHost(hostname)
 
   if (import.meta.env.DEV) {
-    return `${wsProtocol}://${safeHost}:8000/ws`
+    return `${wsProtocol}://${safeHost}:8000/ws${auth ? '/auth' : ''}`
   }
 
   const portSegment = port ? `:${port}` : ''
-  return `${wsProtocol}://${safeHost}${portSegment}/ws`
+  return `${wsProtocol}://${safeHost}${portSegment}/ws${auth ? '/auth' : ''}`
 }
 
 watch(
@@ -326,34 +346,102 @@ function actText(a: Action) {
 
 function saveRoomInfo() {
   if (typeof localStorage !== 'undefined') {
-    localStorage.setItem('mahjong_nickname', nickname.value)
     localStorage.setItem('mahjong_room_id', roomId.value)
   }
 }
 
 function clearRoomInfo() {
   if (typeof localStorage !== 'undefined') {
-    localStorage.removeItem('mahjong_nickname')
     localStorage.removeItem('mahjong_room_id')
   }
 }
 
+function setUser(newUser: User | null) {
+  user.value = newUser
+
+  if (newUser) {
+    username.value = newUser.username
+    nickname.value = newUser.username
+    userScore.value = typeof newUser.score === 'number' ? newUser.score : 1000
+
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('mahjong_user', JSON.stringify(newUser))
+      localStorage.setItem('mahjong_logged_in', 'true')
+    }
+  } else {
+    username.value = ''
+    nickname.value = ''
+    userScore.value = 1000
+
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('mahjong_user')
+      localStorage.removeItem('mahjong_logged_in')
+    }
+  }
+}
+
+function saveUserInfo() {
+  if (user.value) {
+    setUser({ ...user.value })
+  }
+}
+
+function clearUserInfo() {
+  setUser(null)
+}
+
+function attemptAutoReady() {
+  if (!autoReadyRequested.value) return
+  if (!connected.value) return
+  if (isReady.value) {
+    autoReadyRequested.value = false
+    return
+  }
+  if (seat.value === null) return
+  ready()
+}
+
 function connect() {
   if (ws.value) return
-  ws.value = new WebSocket(resolveWebSocketUrl())
+  if (!user.value) {
+    console.error('用户未登录，无法连接')
+    return
+  }
+
+  ws.value = new WebSocket(resolveWebSocketUrl(true))
   ws.value.onopen = () => {
-    connected.value = true
-    saveRoomInfo()
-    send({ type: 'join_room', room_id: roomId.value, nickname: nickname.value })
+    // 先进行用户认证
+    const savedUser = localStorage.getItem('mahjong_user')
+    if (savedUser) {
+      const userData = JSON.parse(savedUser)
+      send({
+        type: 'authenticate',
+        username: userData.username,
+        password: userData.username // 密码与用户名相同
+      })
+    }
   }
   ws.value.onmessage = (ev) => {
     const msg = JSON.parse(ev.data)
-    if (msg.type === 'room_joined') {
+    if (msg.type === 'authentication_success') {
+      // 认证成功，更新用户信息
+      setUser(msg.user)
+      connected.value = true
+      saveRoomInfo()
+      // 认证成功后加入房间
+      send({ type: 'join_room', room_id: roomId.value })
+    } else if (msg.type === 'room_joined') {
       seat.value = msg.seat
+      attemptAutoReady()
     } else if (msg.type === 'room_status') {
       status.value = msg
     } else if (msg.type === 'ready_status') {
       readyStatus.value = msg.ready
+      if (isReady.value) {
+        autoReadyRequested.value = false
+      } else {
+        attemptAutoReady()
+      }
     } else if (msg.type === 'game_started') {
       gameResult.value = null
       events.value = []
@@ -363,6 +451,7 @@ function connect() {
       finalView.value = null
     } else if (msg.type === 'you_are') {
       opponent.value = msg.opponent
+      username.value = msg.username
       hand.value = msg.hand || []
       meldsSelf.value = msg.melds_self || []
       meldsOpp.value = msg.melds_opp || []
@@ -428,13 +517,13 @@ function connect() {
       readyStatus.value = null
     } else if (msg.type === 'error') {
       alert(`错误：${msg.detail}`)
-      if (msg.detail.includes('Nickname is already in use') || msg.detail.includes('Nickname already taken')) {
-        // 昵称被占用，清除本地存储的房间信息
+      if (msg.detail.includes('用户名已被') || msg.detail.includes('请先登录')) {
+        // 用户名被占用或未登录，清除本地存储的房间信息
         clearRoomInfo()
         resetState()
       }
     } else if (msg.type === 'player_kicked') {
-      alert(`您被踢出房间，因为有其他玩家用了相同名字"${msg.nickname}"`)
+      alert(`您被踢出房间，因为有其他玩家用了相同名字"${msg.username}"`)
       clearRoomInfo()
       connected.value = false
       ws.value = null
@@ -443,10 +532,10 @@ function connect() {
       seat.value = null
     } else if (msg.type === 'player_disconnected') {
       // 可以在这里添加掉线提示
-      console.log(`玩家 ${msg.nickname} 掉线了`)
+      console.log(`玩家 ${msg.username} 掉线了`)
     } else if (msg.type === 'player_reconnected') {
       // 可以在这里添加重连提示
-      console.log(`玩家 ${msg.nickname} 重新连接了`)
+      console.log(`玩家 ${msg.username} 重新连接了`)
     } else if (msg.type === 'mutual_replacement_completed') {
       // 双方相互顶替重连完成
       console.log('双方相互顶替重连完成，座位和手牌已交换')
@@ -459,12 +548,31 @@ function connect() {
     gameInProgress.value = false
     oppHandCount.value = 13
     readyStatus.value = null
+    autoReadyRequested.value = false
   }
 }
 
 function ready() {
-  if (!connected.value || isReady.value) return
+  if (!connected.value) return
+  if (isReady.value) {
+    autoReadyRequested.value = false
+    return
+  }
+  autoReadyRequested.value = false
   send({ type: 'ready' })
+}
+
+function joinAndReady() {
+  if (isReady.value) {
+    autoReadyRequested.value = false
+    return
+  }
+  if (!connected.value) {
+    autoReadyRequested.value = true
+    connect()
+    return
+  }
+  ready()
 }
 
 function selectTile(index: number) {
@@ -502,13 +610,15 @@ function disconnect() {
 
 function resetState() {
   disconnect()
-  nickname.value = 'A'
+  username.value = user.value?.username || ''
+  nickname.value = user.value?.username || ''
   roomId.value = 'room1'
   connected.value = false
   seat.value = null
   opponent.value = ''
   status.value = {}
   readyStatus.value = null
+  autoReadyRequested.value = false
   hand.value = []
   meldsSelf.value = []
   meldsOpp.value = []
@@ -561,7 +671,10 @@ function findAddedIndexForTile(newHand: number[], oldHand: number[], tile: numbe
 
 export function useGameStore() {
   return {
+    user,
+    username,
     nickname,
+    userScore,
     roomId,
     ws,
     connected,
@@ -607,6 +720,7 @@ export function useGameStore() {
     actText,
     connect,
     ready,
+    joinAndReady,
     selectTile,
     confirmDiscard,
     doAction,
@@ -615,5 +729,8 @@ export function useGameStore() {
     resetState,
     saveRoomInfo,
     clearRoomInfo,
+    setUser,
+    saveUserInfo,
+    clearUserInfo,
   }
 }

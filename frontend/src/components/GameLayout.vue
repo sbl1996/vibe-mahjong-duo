@@ -5,6 +5,11 @@
         <div class="title-block">
           <h1>Mahjong Duo</h1>
         </div>
+        <nav class="navigation" v-if="user">
+          <router-link to="/join" class="nav-link" active-class="active">加入房间</router-link>
+          <router-link to="/profile" class="nav-link" active-class="active">个人信息</router-link>
+          <button class="logout-btn" @click="handleLogout">退出登录</button>
+        </nav>
         <div class="header-status">
           <div class="status-line">
             <span v-if="connected">
@@ -36,9 +41,13 @@
 </template>
 
 <script setup lang="ts">
+import { useRouter } from 'vue-router'
 import { useGameStore } from '../stores/game'
 
+const router = useRouter()
+const store = useGameStore()
 const {
+  user,
   connected,
   status,
   seat,
@@ -46,7 +55,14 @@ const {
   gameInProgress,
   readyStatus,
   readySummary,
-} = useGameStore()
+} = store
+
+const handleLogout = () => {
+  store.setUser(null)
+  store.clearRoomInfo()
+  store.resetState()
+  router.push('/')
+}
 </script>
 
 <style>
@@ -68,7 +84,7 @@ const {
 }
 
 .game-card {
-  width: min(1100px, 100%);
+  width: min(1200px, 100%);
   background: linear-gradient(145deg, rgba(18, 26, 48, 0.95), rgba(7, 12, 24, 0.92));
   border-radius: 28px;
   padding: 32px;
@@ -85,6 +101,52 @@ const {
   align-items: flex-start;
   gap: 16px;
   margin-bottom: 24px;
+}
+
+.navigation {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.nav-link {
+  color: #b9c9ff;
+  text-decoration: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  border: 1px solid transparent;
+}
+
+.nav-link:hover {
+  background: rgba(102, 126, 234, 0.2);
+  color: #f9fbff;
+}
+
+.nav-link.active {
+  background: rgba(102, 126, 234, 0.3);
+  color: #f9fbff;
+  border-color: rgba(102, 126, 234, 0.5);
+}
+
+.logout-btn {
+  background: rgba(231, 76, 60, 0.2);
+  color: #ff6b6b;
+  border: 1px solid rgba(231, 76, 60, 0.4);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+
+.logout-btn:hover {
+  background: rgba(231, 76, 60, 0.3);
+  color: #ff5252;
+  border-color: rgba(231, 76, 60, 0.6);
 }
 
 .title-block h1 {
@@ -238,6 +300,23 @@ button:not(:disabled):hover {
   background: rgba(71, 216, 142, 0.92);
   color: #072417;
   border-color: rgba(71, 216, 142, 0.95);
+}
+
+.ready-button:not(.ready):not(.connecting) {
+  background: linear-gradient(135deg, #4f9aff, #5270ff);
+  color: #fff;
+  box-shadow: 0 12px 24px rgba(82, 112, 255, 0.35);
+}
+
+.ready-button:not(.ready):not(.connecting):hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 28px rgba(82, 112, 255, 0.45);
+}
+
+.ready-button.connecting {
+  background: rgba(32, 49, 94, 0.6);
+  color: #b9c9ff;
+  box-shadow: none;
 }
 
 .primary {

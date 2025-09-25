@@ -115,10 +115,10 @@
       <p v-else class="final-hands-hint">暂无手牌结算信息，等待下一局。</p>
 
       <div class="victory-actions">
-        <button class="primary" @click="backToJoin">返回准备</button>
-        <button class="secondary" :disabled="!connected" @click="ready">
+        <button class="primary" :disabled="!connected" @click="ready">
           再来一局
         </button>
+        <button class="secondary" @click="backToJoin">返回准备</button>
       </div>
     </section>
 
@@ -233,6 +233,7 @@ watch(
   gameResult,
   (result) => {
     if (result) return
+    if (router.currentRoute.value.name === 'join') return
     router.replace({ name: 'join' })
   },
   { immediate: true }
@@ -242,6 +243,7 @@ watch(
   gameInProgress,
   (inProgress) => {
     if (!inProgress) return
+    if (router.currentRoute.value.name === 'game') return
     router.replace({ name: 'game' })
   },
   { immediate: true }
@@ -251,13 +253,33 @@ watch(
   connected,
   (isConnected) => {
     if (isConnected) return
+    if (router.currentRoute.value.name === 'join') return
     router.replace({ name: 'join' })
   },
   { immediate: true }
 )
 
 function backToJoin() {
-  router.replace({ name: 'join' })
+
+  // Check if we're already on the join page
+  if (router.currentRoute.value.name === 'join') {
+    return
+  }
+
+  try {
+    // Clear game result to prevent automatic re-navigation
+    gameResult.value = null
+    // Force navigation to join page
+    router.replace({ name: 'join' }).catch((error) => {
+      console.error('Navigation error:', error)
+      // If navigation fails, try push instead
+      router.push({ name: 'join' }).catch((e) => {
+        console.error('Push navigation also failed:', e)
+      })
+    })
+  } catch (error) {
+    console.error('Error in backToJoin navigation:', error)
+  }
 }
 </script>
 

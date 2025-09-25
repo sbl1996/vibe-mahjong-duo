@@ -1,13 +1,125 @@
 # -*- coding: utf-8 -*-
 import json, asyncio, random
 from typing import Dict, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from rules_core import *
+from database import db, init_database
 
+BASE_SCORE = 8  # 初始分为 1000 时，1 番起始变动约为 16 分
+
+
+def fan_to_points(fan_total: int, base: int = BASE_SCORE) -> int:
+    """根据番数计算积分变化"""
+    fan_value = max(fan_total, 0)
+    return base * (2 ** fan_value)
 
 app = FastAPI()
+
+# 添加CORS中间件
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.on_event("startup")
+async def startup_event():
+    """启动时初始化数据库"""
+    await init_database()
+
+@app.post("/api/login")
+async def login(request: Request):
+    """用户登录"""
+    try:
+        data = await request.json()
+        username = data.get("username")
+        password = data.get("password")
+
+        if not username or not password:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "用户名和密码不能为空"}
+            )
+
+        # 验证用户
+        user = await db.authenticate_user(username, password)
+        if user:
+            return JSONResponse(content={
+                "success": True,
+                "user": user
+            })
+        else:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "用户名或密码错误"}
+            )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"服务器错误: {str(e)}"}
+        )
+
+@app.get("/api/user/{username}")
+async def get_user_info(username: str):
+    """获取用户信息"""
+    try:
+        user = await db.get_user_by_username(username)
+        if user:
+            # 获取用户统计信息
+            stats = await db.get_user_stats(user["id"])
+            return JSONResponse(content={
+                "user": user,
+                "stats": stats
+            })
+        else:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "用户不存在"}
+            )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"服务器错误: {str(e)}"}
+        )
+
+@app.get("/api/user/{username}/records")
+async def get_user_records(username: str, limit: int = 20):
+    """获取用户对局记录"""
+    try:
+        user = await db.get_user_by_username(username)
+        if not user:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "用户不存在"}
+            )
+
+        records = await db.get_user_game_records(user["id"], limit)
+        return JSONResponse(content={"records": records})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"服务器错误: {str(e)}"}
+        )
+
+@app.get("/api/leaderboard")
+async def get_leaderboard(limit: int = 10):
+    """获取排行榜"""
+    try:
+        leaderboard = await db.get_leaderboard(limit)
+        return JSONResponse(content={"leaderboard": leaderboard})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"服务器错误: {str(e)}"}
+        )
+
+# 存储已登录的用户会话
+authenticated_sessions: Dict[str, Dict] = {}
 
 
 class Session:
@@ -15,7 +127,8 @@ class Session:
         self.ws = ws
         self.room: Optional["Room"] = None
         self.seat: Optional[int] = None
-        self.nickname: str = "Anon"
+        self.user_id: Optional[int] = None
+        self.username: Optional[str] = None
 
     async def send(self, data: dict):
         await self.ws.send_text(json.dumps(data, ensure_ascii=False))
@@ -31,6 +144,11 @@ class Room:
 
     def opponent(self, seat: int) -> Optional[Session]:
         return self.sess.get(1-seat)
+
+    def get_player_name(self, seat: int) -> str:
+        """获取指定座位玩家的名字"""
+        session = self.sess.get(seat)
+        return session.username if session and session.username else f"Player{seat}"
 
     async def broadcast(self, data: dict):
         for s in self.sess.values():
@@ -92,7 +210,7 @@ class Room:
         await sess.send({
             "type":"sync_view",
             **view,
-            "opponent": getattr(self.opponent(seat), "nickname", "??"),
+            "opponent": self.get_player_name(1-seat),
         })
 
     async def sync_all(self):
@@ -126,8 +244,8 @@ class Room:
             await s.send({
                 "type":"you_are",
                 "seat": seat,
-                "nickname": s.nickname,
-                "opponent": getattr(self.opponent(seat), "nickname", "??"),
+                "username": s.username,
+                "opponent": self.get_player_name(1-seat),
                 **view,
             })
         # 首回合：轮到0先摸
@@ -193,6 +311,307 @@ async def attach(ws: WebSocket) -> Session:
     await ws.accept()
     return Session(ws)
 
+@app.websocket("/ws/auth")
+async def auth_ws_endpoint(ws: WebSocket):
+    """需要认证的WebSocket端点"""
+    sess = await attach(ws)
+    try:
+        while True:
+            raw = await ws.receive_text()
+            msg = json.loads(raw)
+            t = msg.get("type")
+
+            if t == "authenticate":
+                # 用户认证
+                username = msg.get("username")
+                password = msg.get("password")
+                token = msg.get("token")  # 可以支持token认证
+
+                if username and password:
+                    user = await db.authenticate_user(username, password)
+                    if user:
+                        sess.user_id = user["id"]
+                        sess.username = user["username"]
+                        await sess.send({
+                            "type": "authentication_success",
+                            "user": user
+                        })
+                        continue
+                    else:
+                        await sess.send({
+                            "type": "error",
+                            "detail": "用户名或密码错误"
+                        })
+                        continue
+                else:
+                    await sess.send({
+                        "type": "error",
+                        "detail": "缺少认证信息"
+                    })
+                    continue
+
+            elif t == "join_room":
+                # 检查用户是否已认证
+                if not sess.user_id or not sess.username:
+                    await sess.send({"type":"error","detail":"请先登录"})
+                    continue
+
+                # 使用原始的join_room逻辑
+                rid = msg.get("room_id","default")
+                room = rooms.setdefault(rid, Room(rid))
+
+                # 检查是否允许加入
+                # 1. 检查是否房间已满且没有掉线的同名额玩家
+                if len(room.sess) == 2:
+                    # 检查是否有掉线的同名额玩家
+                    seat_to_replace = None
+                    for seat, existing_username in room.player_names.items():
+                        if existing_username == sess.username and seat not in room.sess:
+                            seat_to_replace = seat
+                            break
+
+                    if seat_to_replace is not None:
+                        # 找到掉线的同名额玩家，允许重连
+                        seat = seat_to_replace
+
+                    else:
+                        await sess.send({"type":"error","detail":"房间已满且没有找到匹配的离线玩家"})
+                        continue
+                else:
+                    # 分配新座位
+                    if 0 not in room.sess:
+                        seat = 0
+                    elif 1 not in room.sess:
+                        seat = 1
+                    else:
+                        await sess.send({"type":"error","detail":"房间已满"})
+                        continue
+
+                # 检查重名限制：不允许同一个房间有两个相同名字的玩家
+                for existing_seat, existing_username in room.player_names.items():
+                    if existing_username == sess.username and existing_seat != seat:
+                        if existing_seat in room.sess:
+                            # 如果同名玩家已经在线，不允许新玩家加入并提示昵称已被使用
+                            await sess.send({"type":"error","detail":"用户名已被此房间其他玩家使用"})
+                            continue
+                        else:
+                            # 如果同名玩家离线，不允许新玩家加入
+                            await sess.send({"type":"error","detail":"用户名已被此房间其他玩家占用"})
+                            continue
+
+                # 加入房间
+                room.sess[seat] = sess
+                room.player_names[seat] = sess.username
+                sess.room, sess.seat = room, seat
+                room.ready[seat] = False
+                await sess.send({"type":"room_joined","room_id":rid,"seat":seat})
+                await room.broadcast({"type":"ready_status","ready":dict(room.ready)})
+                if room.opponent(seat):
+                    await room.broadcast({"type":"room_status","players":[0 in room.sess, 1 in room.sess]})
+
+                # 通知房间有玩家重新加入
+                await room.broadcast({"type":"player_reconnected","seat":seat,"username":sess.username})
+
+                # 如果房间有游戏状态，同步给重新加入的玩家
+                if room.state:
+                    await room.sync_player(seat)
+                    # 如果游戏进行中且轮到该玩家，重新发送可执行操作
+                    if room.state and not room.state.ended and room.state.turn == seat:
+                        choices = legal_choices(room.state, seat)
+                        await sess.send({"type":"choices","actions":choices})
+                    # 如果是对家响应阶段，检查是否需要发送操作
+                    elif room.state and not room.state.ended and room.state.last_discard is not None:
+                        # 检查是否是对家的回合（可以响应）
+                        if room.state.turn == seat:
+                            choices = legal_choices(room.state, seat)
+                            if choices:
+                                await sess.send({"type":"choices","actions":choices})
+
+            elif t == "ready":
+                if not sess.room or sess.seat is None: continue
+                sess.room.ready[sess.seat] = True
+                await sess.room.broadcast({"type":"ready_status","ready":dict(sess.room.ready)})
+                await sess.room.try_start()
+
+            elif t == "act":
+                if not sess.room or sess.seat is None: continue
+                action = msg.get("action",{})
+                room = sess.room
+                async with room.lock:
+                    st = room.state
+                    if st is None: continue
+
+                    # 自己回合的行动
+                    if st.turn == sess.seat and st.last_discard is None:
+                        if action.get("type") == "discard":
+                            tile = int(action["tile"])
+                            room.state = discard(st, sess.seat, tile)
+                            await room.broadcast({"type":"event","ev":{"type":"discard","seat":sess.seat,"tile":tile}})
+                            await room.sync_all()
+                            await sess.send({"type":"choices","actions":[]})
+                            # 出牌后让对家选择响应
+                            await room.step_after_discard(lock_held=True)
+
+                        elif action.get("type") == "kong":
+                            style = action.get("style")
+                            tile = int(action["tile"])
+                            if style == "concealed":
+                                room.state = kong_concealed(st, sess.seat, tile)
+                            elif style == "added":
+                                room.state = kong_added(st, sess.seat, tile)
+                            else:
+                                await sess.send({"type":"error","detail":"bad kong style"}); continue
+                            ev_payload = {"type":"kong","style":style,"seat":sess.seat}
+                            if style != "concealed":
+                                ev_payload["tile"] = tile
+                            await room.broadcast({"type":"event","ev":ev_payload})
+                            # 杠后继续摸牌
+                            await room.sync_all()
+                            await room.step_auto(lock_held=True)
+
+                        elif action.get("type") == "hu" and action.get("style")=="self":
+                            # 自摸胡
+                            if can_hu_four_plus_one(st.players[sess.seat].hand, st.players[sess.seat].melds):
+                                room.state = replace(st, ended=True)
+                                score_summary = compute_score_summary(room.state, sess.seat, "zimo")
+                                await room.broadcast({
+                                    "type": "game_end",
+                                    "result": {"winner": sess.seat, "reason": "zimo", "score": score_summary},
+                                    "final_view": room._final_view_payload(),
+                                })
+                                # 更新积分和记录
+                                await update_game_scores(room, sess.seat, "zimo", score_summary)
+                            else:
+                                await sess.send({"type":"error","detail":"not hu"})
+                        elif action.get("type") == "draw":
+                            room.state, tile = draw(st, sess.seat)
+                            await room.broadcast({"type":"event","ev":{"type":"draw","seat":sess.seat,"tile":tile}})
+                            await room.sync_all()
+                            await room.step_auto(lock_held=True)
+                        else:
+                            await sess.send({"type":"error","detail":"illegal or unsupported action in turn"})
+
+                    # 对家响应阶段（有人刚出牌）
+                    else:
+                        if st.last_discard is None:
+                            await sess.send({"type":"error","detail":"no claimable discard"}); continue
+                        from_seat, tile = st.last_discard
+                        if from_seat == sess.seat:
+                            await sess.send({"type":"error","detail":"cannot claim own discard"}); continue
+
+                        style = action.get("type")
+                        if style == "pass":
+                            # 放弃权利，轮到出牌方的对家（st.turn 已是对家），自动进入其抽牌流程
+                            room.state = replace(st, last_discard=None)
+                            await room.broadcast({"type":"event","ev":{"type":"pass","seat":sess.seat}})
+                            await room.sync_all()
+                            await room.step_auto(lock_held=True)
+                        elif style == "peng":
+                            if not can_peng(st.players[sess.seat].hand, tile):
+                                await sess.send({"type":"error","detail":"cannot peng"}); continue
+                            room.state = claim_peng(st, sess.seat, from_seat, tile)
+                            await room.broadcast({"type":"event","ev":{"type":"peng","seat":sess.seat,"tile":tile}})
+                            # 碰后必须打出一张
+                            await room.sync_all()
+                            await room.step_auto(lock_held=True)
+                        elif style == "kong" and action.get("style")=="exposed":
+                            if not can_kong_exposed(st.players[sess.seat].hand, tile):
+                                await sess.send({"type":"error","detail":"cannot exposed kong"}); continue
+                            room.state = claim_kong_exposed(st, sess.seat, from_seat, tile)
+                            await room.broadcast({"type":"event","ev":{"type":"kong","style":"exposed","seat":sess.seat,"tile":tile}})
+                            # 杠后继续摸牌
+                            await room.sync_all()
+                            await room.step_auto(lock_held=True)
+                        elif style == "hu" and action.get("style")=="ron":
+                            merged = tuple(sorted(st.players[sess.seat].hand + (tile,)))
+                            if can_hu_four_plus_one(merged, st.players[sess.seat].melds):
+                                room.state = replace(st, ended=True)
+                                score_summary = compute_score_summary(room.state, sess.seat, "ron")
+                                await room.broadcast({
+                                    "type": "game_end",
+                                    "result": {"winner": sess.seat, "reason": "ron", "tile": tile, "score": score_summary},
+                                    "final_view": room._final_view_payload({sess.seat: tile}),
+                                })
+                                # 更新积分和记录
+                                await update_game_scores(room, sess.seat, "ron", score_summary)
+                            else:
+                                await sess.send({"type":"error","detail":"not hu"})
+                        else:
+                            await sess.send({"type":"error","detail":"unsupported claim action"})
+
+            else:
+                await sess.send({"type":"error","detail":"unknown message type"})
+
+    except WebSocketDisconnect:
+        # 处理断线：保留玩家名称记录，允许重新加入
+        r = sess.room
+        seat = sess.seat
+        if r and seat in r.sess:
+            del r.sess[seat]
+            if seat in r.ready:
+                r.ready[seat] = False
+            # 保留 player_names 记录，允许重新加入
+            # 只有当两个玩家都断线时才重置游戏
+            if len(r.sess) == 0:
+                r.state = None
+                r.ready = {0: False, 1: False}
+                # 清理玩家名称记录
+                r.player_names.clear()
+            # 通知房间玩家状态变化（包含在线/离线状态）
+            await r.broadcast({"type":"room_status","players":[0 in r.sess, 1 in r.sess]})
+            await r.broadcast({"type":"ready_status","ready":dict(r.ready)})
+            # 通知有玩家掉线
+            await r.broadcast({"type":"player_disconnected","seat":seat,"username":sess.username})
+
+async def update_game_scores(room: Room, winner_seat: int, reason: str, score_summary: dict):
+    """更新游戏积分和记录"""
+    try:
+        loser_seat = 1 - winner_seat
+        winner_session = room.sess.get(winner_seat)
+        loser_session = room.sess.get(loser_seat)
+
+        if not winner_session or not loser_session:
+            return
+
+        # 计算积分变化（基于番数）
+        winner_fan = score_summary.get("players", {}).get(str(winner_seat), {}).get("fan_total", 0)
+
+        # 积分变化规则：胜者获得 base * 2^fan，败者扣除同等积分
+        score_change = fan_to_points(winner_fan)
+
+        # 更新胜者积分
+        await db.update_user_score(winner_session.user_id, score_change)
+
+        # 更新败者积分
+        await db.update_user_score(loser_session.user_id, -score_change)
+
+        # 获取当前积分
+        winner_info = await db.get_user_by_username(winner_session.username)
+        loser_info = await db.get_user_by_username(loser_session.username)
+
+        if winner_info and loser_info:
+            # 添加对局记录
+            await db.add_game_record(
+                winner_session.user_id,
+                loser_session.username,
+                winner_seat == 0,  # 先手
+                score_change,
+                "win",
+                winner_info["score"]
+            )
+
+            await db.add_game_record(
+                loser_session.user_id,
+                winner_session.username,
+                loser_seat == 0,  # 先手
+                -score_change,
+                "lose",
+                loser_info["score"]
+            )
+
+    except Exception as e:
+        print(f"更新积分错误: {e}")
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     sess = await attach(ws)
@@ -204,7 +623,12 @@ async def ws_endpoint(ws: WebSocket):
 
             if t == "join_room":
                 rid = msg.get("room_id","default")
-                sess.nickname = msg.get("nickname","Anon")
+                # 检查用户是否已认证
+                if not sess.user_id or not sess.username:
+                    await sess.send({"type":"error","detail":"请先登录"})
+                    continue
+
+                room = rooms.setdefault(rid, Room(rid))
                 room = rooms.setdefault(rid, Room(rid))
 
                 # 检查是否允许加入
@@ -212,8 +636,8 @@ async def ws_endpoint(ws: WebSocket):
                 if len(room.sess) == 2:
                     # 检查是否有掉线的同名额玩家
                     seat_to_replace = None
-                    for seat, existing_nickname in room.player_names.items():
-                        if existing_nickname == sess.nickname and seat not in room.sess:
+                    for seat, existing_username in room.player_names.items():
+                        if existing_username == sess.username and seat not in room.sess:
                             seat_to_replace = seat
                             break
 
@@ -235,20 +659,20 @@ async def ws_endpoint(ws: WebSocket):
                         continue
 
                 # 检查重名限制：不允许同一个房间有两个相同名字的玩家
-                for existing_seat, existing_nickname in room.player_names.items():
-                    if existing_nickname == sess.nickname and existing_seat != seat:
+                for existing_seat, existing_username in room.player_names.items():
+                    if existing_username == sess.username and existing_seat != seat:
                         if existing_seat in room.sess:
                             # 如果同名玩家已经在线，不允许新玩家加入并提示昵称已被使用
-                            await sess.send({"type":"error","detail":"Nickname is already in use by another player in this room"})
+                            await sess.send({"type":"error","detail":"用户名已被此房间其他玩家使用"})
                             continue
                         else:
                             # 如果同名玩家离线，不允许新玩家加入
-                            await sess.send({"type":"error","detail":"Nickname already taken by another player in this room"})
+                            await sess.send({"type":"error","detail":"用户名已被此房间其他玩家占用"})
                             continue
 
                 # 加入房间
                 room.sess[seat] = sess
-                room.player_names[seat] = sess.nickname
+                room.player_names[seat] = sess.username
                 sess.room, sess.seat = room, seat
                 room.ready[seat] = False
                 await sess.send({"type":"room_joined","room_id":rid,"seat":seat})
@@ -257,7 +681,7 @@ async def ws_endpoint(ws: WebSocket):
                     await room.broadcast({"type":"room_status","players":[0 in room.sess, 1 in room.sess]})
 
                 # 通知房间有玩家重新加入
-                await room.broadcast({"type":"player_reconnected","seat":seat,"nickname":sess.nickname})
+                await room.broadcast({"type":"player_reconnected","seat":seat,"username":sess.username})
 
                 # 如果房间有游戏状态，同步给重新加入的玩家
                 if room.state:
@@ -371,7 +795,7 @@ async def ws_endpoint(ws: WebSocket):
                             merged = tuple(sorted(st.players[sess.seat].hand + (tile,)))
                             if can_hu_four_plus_one(merged, st.players[sess.seat].melds):
                                 room.state = replace(st, ended=True)
-                                score_summary = compute_score_summary(room.state, sess.seat, "ron", ron_from=from_seat)
+                                score_summary = compute_score_summary(room.state, sess.seat, "ron")
                                 await room.broadcast({
                                     "type": "game_end",
                                     "result": {"winner": sess.seat, "reason": "ron", "tile": tile, "score": score_summary},
@@ -404,7 +828,7 @@ async def ws_endpoint(ws: WebSocket):
             await r.broadcast({"type":"room_status","players":[0 in r.sess, 1 in r.sess]})
             await r.broadcast({"type":"ready_status","ready":dict(r.ready)})
             # 通知有玩家掉线
-            await r.broadcast({"type":"player_disconnected","seat":seat,"nickname":sess.nickname})
+            await r.broadcast({"type":"player_disconnected","seat":seat,"username":sess.username})
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

@@ -464,7 +464,7 @@ function goJoin() {
   color: #d4defb;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1200px) {
   .panel {
     padding-bottom: 12px;
   }
