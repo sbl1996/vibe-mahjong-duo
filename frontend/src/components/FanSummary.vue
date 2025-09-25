@@ -8,7 +8,7 @@
       <article v-for="entry in entries" :key="entry.seat" class="fan-summary__player">
         <header class="fan-summary__player-header">
           <h4>{{ entry.label }}</h4>
-          <span class="fan-summary__total">{{ entry.fanTotal }} 积分</span>
+          <span class="fan-summary__total">{{ entry.fanTotal }} 番</span>
         </header>
         <p :class="['fan-summary__net-change', { positive: entry.netChange > 0, negative: entry.netChange < 0 }]">
           积分变化：{{ formatSigned(entry.netChange) }}
@@ -63,7 +63,7 @@ const props = withDefaults(
   }
 )
 
-const netFan = computed(() => (typeof props.summary?.net_fan === 'number' ? props.summary.net_fan : 0))
+const netFan = computed(() => (typeof props.summary?.net_score === 'number' ? props.summary.net_score : 0))
 const shouldRender = computed(() => props.summary !== null && props.summary !== undefined)
 
 const entries = computed<DisplayEntry[]>(() => {

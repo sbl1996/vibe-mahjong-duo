@@ -385,6 +385,12 @@ def _add_fan(entry: Dict[str, Any], name: str, fan: int, detail: Optional[str] =
     entry["fan_total"] = entry.get("fan_total", 0) + fan
 
 
+def fan_to_points(fan_total: int, base: int = 8) -> int:
+    """根据番数计算积分变化"""
+    fan_value = max(fan_total, 0)
+    return base * (2 ** fan_value)
+
+
 def compute_score_summary(
     state: GameState,
     winner: Optional[int],
@@ -449,17 +455,20 @@ def compute_score_summary(
             "net_change": 0,
         }
 
-    net_fan = 0
+    net_score = 0
     if winner is not None:
         loser = 1 - winner
-        net_fan = player_scores[winner]["fan_total"] - player_scores[loser]["fan_total"]
-        if net_fan < 0:
-            net_fan = 0
-        players_payload[str(winner)]["net_change"] = net_fan
-        players_payload[str(loser)]["net_change"] = -net_fan
+        winner_fan = player_scores[winner]["fan_total"]
+        # 计算积分变化
+        score_change = fan_to_points(winner_fan)
+        players_payload[str(winner)]["net_change"] = score_change
+        players_payload[str(loser)]["net_change"] = -score_change
+        net_score = score_change - (-score_change)  # 胜者得分减去败者失分
 
     return {
         "fan_unit": "番",
-        "net_fan": net_fan,
+        "net_fan": net_score,  # 为了兼容性，保留这个字段
+        "score_unit": "积分",
+        "net_score": net_score,
         "players": players_payload,
     }

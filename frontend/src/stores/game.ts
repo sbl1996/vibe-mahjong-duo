@@ -19,6 +19,8 @@ export type FanPlayerScore = {
 export type FanSummary = {
   fan_unit: string
   net_fan: number
+  score_unit: string
+  net_score: number
   players: Record<string, FanPlayerScore>
 }
 
