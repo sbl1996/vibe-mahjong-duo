@@ -155,6 +155,8 @@ const liveFanSummary = computed<FanSummary>(() => {
   return {
     fan_unit: '番',
     net_fan: netFan,
+    score_unit: '点',
+    net_score: 0,
     players,
   }
 })
