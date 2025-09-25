@@ -29,8 +29,11 @@
                   ｜准备 {{ readySummary }}
                 </template>
               </template>
+              <template v-else>
+                等待对手中
+              </template>
             </span>
-            <span v-else>未连接</span>
+            <span v-else>未加入房间</span>
           </div>
         </div>
       </header>
