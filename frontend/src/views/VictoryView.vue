@@ -27,7 +27,7 @@
         :seat="seat"
         :nickname="nickname"
         :opponent="opponent"
-        title="番数结算"
+        title="积分结算"
       />
 
       <div v-if="hasFinalHands" class="final-hands">

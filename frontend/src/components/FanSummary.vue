@@ -2,16 +2,16 @@
   <section v-if="shouldRender" :class="['fan-summary', { 'fan-summary--dense': dense }]">
     <div class="fan-summary__header">
       <h3>{{ title }}</h3>
-      <span class="fan-summary__net">净番：{{ formatSigned(netFan) }}</span>
+      <span class="fan-summary__net">净积分：{{ formatSigned(netFan) }}</span>
     </div>
     <div class="fan-summary__players">
       <article v-for="entry in entries" :key="entry.seat" class="fan-summary__player">
         <header class="fan-summary__player-header">
           <h4>{{ entry.label }}</h4>
-          <span class="fan-summary__total">{{ entry.fanTotal }} {{ fanUnit }}</span>
+          <span class="fan-summary__total">{{ entry.fanTotal }} 积分</span>
         </header>
         <p :class="['fan-summary__net-change', { positive: entry.netChange > 0, negative: entry.netChange < 0 }]">
-          净番变化：{{ formatSigned(entry.netChange) }}
+          积分变化：{{ formatSigned(entry.netChange) }}
         </p>
         <ul class="fan-summary__breakdown">
           <li
@@ -28,7 +28,7 @@
             <small v-if="row.detail" class="fan-summary__detail">{{ row.detail }}</small>
           </li>
           <li v-if="!entry.breakdown.length" class="fan-summary__breakdown-item fan-summary__breakdown-item--empty">
-            <span class="fan-summary__empty">暂无番数加成</span>
+            <span class="fan-summary__empty">暂无积分加成</span>
           </li>
         </ul>
       </article>
@@ -58,12 +58,11 @@ const props = withDefaults(
     dense?: boolean
   }>(),
   {
-    title: '番数信息',
+    title: '积分结算',
     dense: false,
   }
 )
 
-const fanUnit = computed(() => props.summary?.fan_unit ?? '番')
 const netFan = computed(() => (typeof props.summary?.net_fan === 'number' ? props.summary.net_fan : 0))
 const shouldRender = computed(() => props.summary !== null && props.summary !== undefined)
 

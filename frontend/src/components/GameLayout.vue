@@ -25,9 +25,6 @@
                     <span>对方</span>
                   </span>
                 </span>
-                <template v-if="!gameInProgress && readyStatus">
-                  ｜准备 {{ readySummary }}
-                </template>
               </template>
               <template v-else>
                 等待对手中
@@ -55,9 +52,6 @@ const {
   status,
   seat,
   opponent,
-  gameInProgress,
-  readyStatus,
-  readySummary,
 } = store
 
 const handleLogout = () => {
