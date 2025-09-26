@@ -2,42 +2,27 @@
   <GameLayout>
     <div class="profile-page">
       <section class="summary-section">
-        <div class="summary-grid">
-          <div class="identity-card">
-            <span class="identity-chip">玩家信息</span>
-            <h1 class="username">{{ user?.username || '未知玩家' }}</h1>
-            <div class="score-group">
+        <div class="profile-hero">
+          <div class="hero-top">
+            <div class="hero-meta">
+              <span class="identity-chip">玩家档案</span>
+              <h1 class="username">{{ user?.username || '未知玩家' }}</h1>
+              <p class="hero-subtitle">专属积分与战绩总览</p>
+            </div>
+            <div class="score-display">
               <span class="score-label">当前积分</span>
               <span class="score-value">{{ user?.score ?? '--' }}</span>
+              <span class="score-hint">总对局 {{ stats.total_games ?? 0 }}</span>
             </div>
           </div>
-
-          <div class="stats-card">
-            <div class="stats-header">
-              <h2>战绩速览</h2>
-              <span class="stats-subtitle">最近表现一目了然</span>
-            </div>
-            <div class="highlight-grid">
-              <div class="highlight-item">
-                <span class="highlight-label">总对局</span>
-                <span class="highlight-value">{{ stats.total_games ?? 0 }}</span>
-              </div>
-              <div class="highlight-item">
-                <span class="highlight-label">胜利</span>
-                <span class="highlight-value">{{ stats.wins ?? 0 }}</span>
-              </div>
-              <div class="highlight-item">
-                <span class="highlight-label">失败</span>
-                <span class="highlight-value">{{ stats.losses ?? 0 }}</span>
-              </div>
-              <div class="highlight-item">
-                <span class="highlight-label">平局</span>
-                <span class="highlight-value">{{ stats.draws ?? 0 }}</span>
-              </div>
-              <div class="highlight-item">
-                <span class="highlight-label">胜率</span>
-                <span class="highlight-value">{{ winRateText }}</span>
-              </div>
+          <div class="hero-stats">
+            <div
+              v-for="highlight in statHighlights"
+              :key="highlight.label"
+              class="hero-stat-item"
+            >
+              <span class="stat-label">{{ highlight.label }}</span>
+              <span class="stat-value">{{ highlight.value }}</span>
             </div>
           </div>
         </div>
@@ -145,6 +130,13 @@ const winRateText = computed(() => {
   if (!Number.isFinite(rate)) return '--'
   return `${rate.toFixed(1)}%`
 })
+
+const statHighlights = computed(() => [
+  { label: '胜场', value: stats.value.wins ?? 0 },
+  { label: '失败', value: stats.value.losses ?? 0 },
+  { label: '平局', value: stats.value.draws ?? 0 },
+  { label: '胜率', value: winRateText.value }
+])
 
 const loadUserData = async () => {
   if (!user.value) return
@@ -303,25 +295,91 @@ onMounted(() => {
   width: 100%;
 }
 
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 20px;
-  align-items: stretch;
-}
 
-.identity-card {
-  position: relative;
+.profile-hero {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 24px;
-  border-radius: 24px;
-  background: linear-gradient(150deg, rgba(47, 61, 120, 0.95), rgba(19, 28, 60, 0.92));
-  border: 1px solid rgba(124, 162, 255, 0.45);
+  gap: 24px;
+  padding: 28px;
+  border-radius: 28px;
+  background: linear-gradient(150deg, rgba(37, 54, 116, 0.95), rgba(15, 24, 53, 0.9));
+  border: 1px solid rgba(118, 154, 255, 0.45);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 30px 60px rgba(6, 12, 30, 0.52);
+}
+
+.hero-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.hero-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 200px;
+}
+
+.hero-subtitle {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #9fb4ff;
+  letter-spacing: 0.08em;
+}
+
+.score-display {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 20px 26px;
+  border-radius: 24px;
+  background: rgba(12, 20, 44, 0.9);
+  border: 1px solid rgba(140, 167, 255, 0.5);
+  box-shadow: 0 18px 38px rgba(10, 18, 42, 0.6);
+  min-width: min(260px, 100%);
+}
+
+.score-hint {
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  color: rgba(197, 213, 255, 0.75);
+}
+
+.hero-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 16px;
+}
+
+.hero-stat-item {
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: rgba(10, 17, 38, 0.92);
+  border: 1px solid rgba(120, 149, 255, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: inset 0 0 16px rgba(6, 11, 28, 0.45);
+}
+
+.stat-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: #8fa2ff;
+}
+
+.stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #eef2ff;
+  letter-spacing: 0.06em;
 }
 
 .identity-chip {
@@ -347,12 +405,6 @@ onMounted(() => {
     0 4px 12px rgba(0, 0, 0, 0.35);
 }
 
-.score-group {
-  display: flex;
-  align-items: baseline;
-  gap: 14px;
-}
-
 .score-label {
   font-size: 0.9rem;
   color: #a7b6ff;
@@ -368,70 +420,6 @@ onMounted(() => {
   text-shadow:
     0 16px 40px rgba(48, 108, 255, 0.45),
     0 0 18px rgba(90, 138, 255, 0.6);
-}
-
-.stats-card {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 24px;
-  border-radius: 24px;
-  background: rgba(17, 26, 52, 0.9);
-  border: 1px solid rgba(112, 147, 240, 0.35);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 26px 50px rgba(6, 12, 30, 0.5);
-}
-
-.stats-header {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.stats-header h2 {
-  margin: 0;
-  font-size: 1.4rem;
-  letter-spacing: 0.1em;
-  color: #f3f6ff;
-}
-
-.stats-subtitle {
-  margin: 0;
-  font-size: 0.85rem;
-  color: #93a8ff;
-  letter-spacing: 0.08em;
-}
-
-.highlight-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 12px;
-}
-
-.highlight-item {
-  padding: 16px;
-  border-radius: 16px;
-  background: rgba(11, 18, 38, 0.88);
-  border: 1px solid rgba(102, 126, 234, 0.24);
-  box-shadow: inset 0 0 12px rgba(6, 10, 24, 0.45);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.highlight-label {
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  color: #8fa2ff;
-}
-
-.highlight-value {
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #eef2ff;
-  letter-spacing: 0.06em;
 }
 
 .detail-grid {
@@ -693,6 +681,17 @@ onMounted(() => {
 }
 
 @media (max-width: 960px) {
+  .hero-top {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .score-display {
+    align-self: stretch;
+    align-items: flex-start;
+    text-align: left;
+  }
+
   .record-card {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-auto-rows: auto;
@@ -726,12 +725,6 @@ onMounted(() => {
 
   .panel {
     padding: 20px;
-  }
-
-  .score-group {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 6px;
   }
 
   .record-card {

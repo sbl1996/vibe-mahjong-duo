@@ -161,6 +161,9 @@ const {
 
 const winnerName = computed(() => {
   if (!gameResult.value) return '胜利结算'
+  if (gameResult.value.reason === 'abort') {
+    return '对局已中止'
+  }
   const winner = gameResult.value.winner
   if (typeof winner !== 'number') {
     return '本局流局'
@@ -180,12 +183,40 @@ const reasonDescription = computed(() => {
     return `荣和 ${tileText}`
   }
   if (result.reason === 'wall') return '牌墙摸尽（流局）'
+  if (result.reason === 'abort') {
+    const seatValue = seat.value
+    const oppSeatId = seatValue === null ? null : 1 - seatValue
+    if (typeof result.by === 'number') {
+      if (seatValue !== null && result.by === seatValue) {
+        return `${nickname.value || '我方'} 主动结束对局`
+      }
+      if (oppSeatId !== null && result.by === oppSeatId) {
+        return `${opponent.value || '对手'} 主动结束对局`
+      }
+      return `座位 ${result.by} 主动结束对局`
+    }
+    return '对局被提前结束'
+  }
   return result.reason || '未知原因'
 })
 
 const resultSummary = computed(() => {
   const result = gameResult.value
   if (!result) return '暂无'
+  if (result.reason === 'abort') {
+    const seatValue = seat.value
+    const oppSeatId = seatValue === null ? null : 1 - seatValue
+    if (typeof result.by === 'number') {
+      if (seatValue !== null && result.by === seatValue) {
+        return '对局中止 · 我方主动结束'
+      }
+      if (oppSeatId !== null && result.by === oppSeatId) {
+        return '对局中止 · 对手主动结束'
+      }
+      return `对局中止 · 座位 ${result.by} 主动结束`
+    }
+    return '对局中止'
+  }
   if (typeof result.winner !== 'number') {
     return `流局 · ${reasonDescription.value}`
   }

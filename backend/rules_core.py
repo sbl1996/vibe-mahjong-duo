@@ -50,7 +50,7 @@ class GameState:
 def sort_hand(arr: List[int]) -> List[int]:
     return sorted(arr)
 
-def init_game(seed: int) -> GameState:
+def init_game(seed: int, *, first_turn: int = 0) -> GameState:
     wall = build_wall(seed)
     # 发牌：双方各13张（末尾为庄家先摸）
     p0 = sort_hand(wall[:13]); p1 = sort_hand(wall[13:26])
@@ -59,7 +59,9 @@ def init_game(seed: int) -> GameState:
         PlayerState(tuple(p0), tuple(), tuple()),
         PlayerState(tuple(p1), tuple(), tuple()),
     )
-    return GameState(seed=seed, wall=tuple(wall[wall_ptr:]), players=players, turn=0, started=True)
+    if first_turn not in (0, 1):
+        raise ValueError("first_turn must be 0 or 1")
+    return GameState(seed=seed, wall=tuple(wall[wall_ptr:]), players=players, turn=first_turn, started=True)
 
 def counts_from_tiles(tiles: Tuple[int, ...]) -> Tuple[int, ...]:
     c = [0]*TILE_TYPES

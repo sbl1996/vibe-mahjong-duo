@@ -2,7 +2,6 @@
   <section v-if="shouldRender" :class="['fan-summary', { 'fan-summary--dense': dense }]">
     <div class="fan-summary__header">
       <h3>{{ title }}</h3>
-      <span class="fan-summary__net">净积分：{{ formatSigned(netFan) }}</span>
     </div>
     <div class="fan-summary__players">
       <article v-for="entry in entries" :key="entry.seat" class="fan-summary__player">
@@ -63,7 +62,6 @@ const props = withDefaults(
   }
 )
 
-const netFan = computed(() => (typeof props.summary?.net_score === 'number' ? props.summary.net_score : 0))
 const shouldRender = computed(() => props.summary !== null && props.summary !== undefined)
 
 const entries = computed<DisplayEntry[]>(() => {

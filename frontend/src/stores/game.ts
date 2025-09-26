@@ -608,6 +608,12 @@ function send(obj: any) {
   ws.value?.send(JSON.stringify(obj))
 }
 
+function endGame() {
+  if (!connected.value) return
+  if (!gameInProgress.value) return
+  send({ type: 'end_game' })
+}
+
 function disconnect() {
   ws.value?.close()
 }
@@ -729,6 +735,7 @@ export function useGameStore() {
     confirmDiscard,
     doAction,
     send,
+    endGame,
     disconnect,
     resetState,
     saveRoomInfo,

@@ -231,12 +231,14 @@ class Room:
             self.state = None
 
         seed = random.randint(1, 10**9)
-        self.state = init_game(seed)
+        first_turn = random.randint(0, 1)
+        self.state = init_game(seed, first_turn=first_turn)
         self.ready = {0: False, 1: False}
 
         await self.broadcast({
             "type":"game_started",
             "seed": seed,
+            "first_turn": first_turn,
         })
         # 给两位下发各自可见信息
         for seat, s in self.sess.items():
@@ -248,7 +250,7 @@ class Room:
                 "opponent": self.get_player_name(1-seat),
                 **view,
             })
-        # 首回合：轮到0先摸
+        # 首回合：根据随机先手执行自动流程
         await self.step_auto()
 
     async def step_auto(self, *, lock_held: bool = False):
@@ -433,6 +435,9 @@ async def auth_ws_endpoint(ws: WebSocket):
                 await sess.room.broadcast({"type":"ready_status","ready":dict(sess.room.ready)})
                 await sess.room.try_start()
 
+            elif t == "end_game":
+                await handle_end_game_request(sess)
+
             elif t == "act":
                 if not sess.room or sess.seat is None: continue
                 action = msg.get("action",{})
@@ -612,6 +617,32 @@ async def update_game_scores(room: Room, winner_seat: int, reason: str, score_su
     except Exception as e:
         print(f"更新积分错误: {e}")
 
+
+async def handle_end_game_request(sess: Session):
+    """允许当前玩家强制结束正在进行的对局"""
+    if not sess.room or sess.seat is None:
+        return
+
+    room = sess.room
+    final_view: Optional[dict] = None
+
+    async with room.lock:
+        state = room.state
+        if state is None or getattr(state, "ended", False):
+            return
+
+        room.state = replace(state, ended=True)
+        final_view = room._final_view_payload()
+        room.ready = {0: False, 1: False}
+
+    payload = {
+        "type": "game_end",
+        "result": {"winner": None, "reason": "abort", "by": sess.seat},
+        "final_view": final_view,
+    }
+    await room.broadcast(payload)
+    await room.broadcast({"type": "ready_status", "ready": dict(room.ready)})
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     sess = await attach(ws)
@@ -703,6 +734,9 @@ async def ws_endpoint(ws: WebSocket):
                 sess.room.ready[sess.seat] = True
                 await sess.room.broadcast({"type":"ready_status","ready":dict(sess.room.ready)})
                 await sess.room.try_start()
+
+            elif t == "end_game":
+                await handle_end_game_request(sess)
 
             elif t == "act":
                 if not sess.room or sess.seat is None: continue

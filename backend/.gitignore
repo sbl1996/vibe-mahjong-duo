@@ -8,6 +8,7 @@ static/
 *.egg-info
 *.log
 *.pid
+*.db*
 
 # Virtual environments
 .venv

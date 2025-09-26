@@ -6,8 +6,16 @@
           <h1>Mahjong Duo</h1>
         </div>
         <nav class="navigation" v-if="user">
-          <router-link to="/join" class="nav-link" active-class="active">加入房间</router-link>
+          <router-link to="/join" class="nav-link" active-class="active">开一局</router-link>
           <router-link to="/profile" class="nav-link" active-class="active">个人信息</router-link>
+          <button
+            v-if="gameInProgress"
+            class="endgame-btn"
+            type="button"
+            @click="handleEndGame"
+          >
+            结束对局
+          </button>
           <button class="logout-btn" @click="handleLogout">退出登录</button>
         </nav>
         <div class="header-status">
@@ -52,6 +60,8 @@ const {
   status,
   seat,
   opponent,
+  gameInProgress,
+  endGame: requestEndGame,
 } = store
 
 const handleLogout = () => {
@@ -59,6 +69,13 @@ const handleLogout = () => {
   store.clearRoomInfo()
   store.resetState()
   router.push('/')
+}
+
+const handleEndGame = () => {
+  if (!gameInProgress.value) return
+  const confirmed = window.confirm('确定要结束当前对局吗？')
+  if (!confirmed) return
+  requestEndGame()
 }
 </script>
 
@@ -81,7 +98,7 @@ const handleLogout = () => {
 }
 
 .game-card {
-  width: min(1200px, 100%);
+  width: min(1260px, 100%);
   background: linear-gradient(145deg, rgba(18, 26, 48, 0.95), rgba(7, 12, 24, 0.92));
   border-radius: 28px;
   padding: 32px;
@@ -144,6 +161,25 @@ const handleLogout = () => {
   background: rgba(231, 76, 60, 0.3);
   color: #ff5252;
   border-color: rgba(231, 76, 60, 0.6);
+}
+
+.endgame-btn {
+  background: rgba(255, 193, 7, 0.18);
+  color: #ffca60;
+  border: 1px solid rgba(255, 193, 7, 0.4);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+
+.endgame-btn:hover {
+  background: rgba(255, 193, 7, 0.28);
+  color: #ffd88c;
+  border-color: rgba(255, 193, 7, 0.6);
 }
 
 .title-block h1 {
