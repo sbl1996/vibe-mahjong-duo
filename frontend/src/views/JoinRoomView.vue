@@ -36,9 +36,9 @@ const { username, roomId, connected, isReady, joinAndReady, ws, gameInProgress, 
 const joinButtonLabel = computed(() => {
   if (isReady.value) return '准备就绪'
   if (!connected.value) {
-    return ws.value ? '连接中…' : '点击准备'
+    return ws.value ? '连接中…' : '加入房间'
   }
-  return '点击准备'
+  return '加入房间'
 })
 
 const joinButtonDisabled = computed(() => {

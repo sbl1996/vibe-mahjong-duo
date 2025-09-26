@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 import json, asyncio, random
+from pathlib import Path
 from typing import Dict, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from rules_core import *
 from database import db, init_database
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+INDEX_FILE = STATIC_DIR / "index.html"
 
 BASE_SCORE = 8  # 初始分为 1000 时，1 番起始变动约为 16 分
 
@@ -865,9 +868,30 @@ async def ws_endpoint(ws: WebSocket):
             await r.broadcast({"type":"player_disconnected","seat":seat,"username":sess.username})
 
 
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
-
-
 @app.get("/", include_in_schema=False)
 async def serve_index() -> FileResponse:
-    return FileResponse("static/index.html")
+    return FileResponse(INDEX_FILE)
+
+
+def _resolve_static_file(path_segment: str) -> Optional[Path]:
+    target = (STATIC_DIR / path_segment).resolve()
+    try:
+        target.relative_to(STATIC_DIR)
+    except ValueError:
+        return None
+    return target if target.is_file() else None
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def serve_spa_assets(full_path: str) -> FileResponse:
+    if full_path.startswith("api"):
+        raise HTTPException(status_code=404)
+
+    static_file = _resolve_static_file(full_path)
+    if static_file:
+        return FileResponse(static_file)
+
+    if "." in full_path.rsplit("/", 1)[-1]:
+        raise HTTPException(status_code=404)
+
+    return FileResponse(INDEX_FILE)
