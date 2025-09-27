@@ -5,15 +5,15 @@
         class="board-fan-summary"
         :summary="liveFanSummary"
         :seat="seat"
-        :nickname="nickname"
-        :opponent="opponent"
+        :nickname="displayNickname"
+        :opponent="displayOpponent"
         title="当前番数"
         dense
       />
       <section class="panel panel-opp">
         <header class="panel-head">
           <h3>对手桌面</h3>
-          <small v-if="opponent">{{ opponent }}</small>
+          <small v-if="displayOpponent">{{ displayOpponent }}</small>
         </header>
         <div class="panel-body">
           <div class="info-row hand-row">
@@ -80,7 +80,7 @@
       <section class="panel panel-self">
         <header class="panel-head">
           <h3>我的桌面</h3>
-          <small v-if="nickname">{{ nickname }}</small>
+          <small v-if="displayNickname">{{ displayNickname }}</small>
         </header>
         <div class="panel-body">
           <div class="info-row hand-row">
@@ -183,8 +183,8 @@ const store = useGameStore()
 const {
   connected,
   seat,
-  opponent,
-  nickname,
+  displayOpponent,
+  displayNickname,
   oppHandPlaceholders,
   tileBackImage,
   meldsOpp,

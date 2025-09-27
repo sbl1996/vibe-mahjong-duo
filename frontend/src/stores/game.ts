@@ -1,9 +1,30 @@
 import { computed, ref, watch } from 'vue'
+import { formatDisplayName } from '../utils/displayName'
 
 export type User = {
   id: number
   username: string
   score: number
+  vip_level: number
+}
+
+function normalizeUser(data: Partial<User> | null): User | null {
+  if (!data) return null
+
+  const id = typeof data.id === 'number' && Number.isFinite(data.id) ? data.id : Number(data.id ?? 0)
+  const scoreValue =
+    typeof data.score === 'number' && Number.isFinite(data.score) ? data.score : Number(data.score ?? 1000)
+  const vipLevelValue =
+    typeof data.vip_level === 'number' && Number.isFinite(data.vip_level)
+      ? data.vip_level
+      : Number(data.vip_level ?? 0)
+
+  return {
+    id: Number.isFinite(id) ? id : 0,
+    username: typeof data.username === 'string' ? data.username : '',
+    score: Number.isFinite(scoreValue) ? scoreValue : 1000,
+    vip_level: Number.isFinite(vipLevelValue) ? vipLevelValue : 0,
+  }
 }
 
 export type Action = { type: string; tile?: number; style?: string }
@@ -36,12 +57,17 @@ type FinalViewPayload = {
 }
 
 // 从localStorage恢复用户信息和房间信息
-const savedUser = typeof localStorage !== 'undefined' ? localStorage.getItem('mahjong_user') : null
+const savedUserRaw = typeof localStorage !== 'undefined' ? localStorage.getItem('mahjong_user') : null
+const savedUser = savedUserRaw ? normalizeUser(JSON.parse(savedUserRaw) as Partial<User>) : null
+const savedToken = typeof localStorage !== 'undefined' ? localStorage.getItem('mahjong_token') : null
 const savedRoomId = typeof localStorage !== 'undefined' ? localStorage.getItem('mahjong_room_id') : 'room1'
 
-const user = ref<User | null>(savedUser ? (JSON.parse(savedUser) as User) : null)
+const user = ref<User | null>(savedUser)
+const authToken = ref<string | null>(savedToken)
 const username = ref(user.value?.username || '')
 const nickname = ref(user.value?.username || '')
+const displayUsername = computed(() => formatDisplayName(username.value))
+const displayNickname = computed(() => formatDisplayName(nickname.value))
 
 watch(username, (newUsername) => {
   nickname.value = newUsername
@@ -51,9 +77,13 @@ const roomId = ref(savedRoomId || 'room1')
 const ws = ref<WebSocket | null>(null)
 const connected = ref(false)
 const autoReadyRequested = ref(false)
+const aiPracticePending = ref(false)
+const vipLevel = computed(() => user.value?.vip_level ?? 0)
+const canAccessAiPractice = computed(() => vipLevel.value >= 1)
 
 const seat = ref<number | null>(null)
 const opponent = ref('')
+const displayOpponent = computed(() => formatDisplayName(opponent.value))
 const status = ref<any>({})
 const readyStatus = ref<any>(null)
 
@@ -360,22 +390,39 @@ function clearRoomInfo() {
   }
 }
 
-function setUser(newUser: User | null) {
-  user.value = newUser
+function setAuthToken(token: string | null) {
+  authToken.value = token
 
-  if (newUser) {
-    username.value = newUser.username
-    nickname.value = newUser.username
-    userScore.value = typeof newUser.score === 'number' ? newUser.score : 1000
+  if (typeof localStorage === 'undefined') {
+    return
+  }
+
+  if (token) {
+    localStorage.setItem('mahjong_token', token)
+  } else {
+    localStorage.removeItem('mahjong_token')
+  }
+}
+
+function setUser(newUser: Partial<User> | null) {
+  const normalized = normalizeUser(newUser)
+  user.value = normalized
+
+  if (normalized) {
+    username.value = normalized.username
+    nickname.value = normalized.username
+    userScore.value = typeof normalized.score === 'number' ? normalized.score : 1000
 
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('mahjong_user', JSON.stringify(newUser))
+      localStorage.setItem('mahjong_user', JSON.stringify(normalized))
       localStorage.setItem('mahjong_logged_in', 'true')
     }
   } else {
     username.value = ''
     nickname.value = ''
     userScore.value = 1000
+
+    setAuthToken(null)
 
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('mahjong_user')
@@ -405,24 +452,44 @@ function attemptAutoReady() {
   ready()
 }
 
+function sendPracticeRequestAndReady() {
+  if (!connected.value) return
+  if (seat.value === null) return
+  send({ type: 'practice_ai' })
+  ready()
+  aiPracticePending.value = false
+}
+
+function attemptAiPractice() {
+  if (!aiPracticePending.value) return
+  if (!connected.value) return
+  if (seat.value === null) return
+  sendPracticeRequestAndReady()
+}
+
 function connect() {
   if (ws.value) return
   if (!user.value) {
     console.error('用户未登录，无法连接')
     return
   }
+  if (!authToken.value) {
+    console.error('缺少认证 token，请重新登录')
+    return
+  }
 
   ws.value = new WebSocket(resolveWebSocketUrl(true))
   ws.value.onopen = () => {
     // 先进行用户认证
-    const savedUser = localStorage.getItem('mahjong_user')
-    if (savedUser) {
-      const userData = JSON.parse(savedUser)
+    const tokenToUse = authToken.value || (typeof localStorage !== 'undefined' ? localStorage.getItem('mahjong_token') : null)
+    if (tokenToUse) {
       send({
         type: 'authenticate',
-        username: userData.username,
-        password: userData.username // 密码与用户名相同
+        token: tokenToUse,
       })
+    } else {
+      console.warn('未找到有效的登录凭证，已断开连接')
+      ws.value?.close()
     }
   }
   ws.value.onmessage = (ev) => {
@@ -437,6 +504,7 @@ function connect() {
     } else if (msg.type === 'room_joined') {
       seat.value = msg.seat
       attemptAutoReady()
+      attemptAiPractice()
     } else if (msg.type === 'room_status') {
       status.value = msg
     } else if (msg.type === 'ready_status') {
@@ -446,6 +514,15 @@ function connect() {
       } else {
         attemptAutoReady()
       }
+    } else if (msg.type === 'practice_enabled') {
+      const aiSeat = typeof msg.seat === 'number' ? msg.seat : null
+      const mySeat = seat.value
+      if (mySeat !== null && aiSeat !== null && aiSeat !== mySeat) {
+        opponent.value = 'AI陪练'
+      } else if (mySeat === null) {
+        opponent.value = 'AI陪练'
+      }
+      aiPracticePending.value = false
     } else if (msg.type === 'game_started') {
       gameResult.value = null
       events.value = []
@@ -527,7 +604,8 @@ function connect() {
         resetState()
       }
     } else if (msg.type === 'player_kicked') {
-      alert(`您被踢出房间，因为有其他玩家用了相同名字"${msg.username}"`)
+      const conflictedName = formatDisplayName(msg.username)
+      alert(`您被踢出房间，因为有其他玩家用了相同名字"${conflictedName}"`)
       clearRoomInfo()
       connected.value = false
       ws.value = null
@@ -553,6 +631,7 @@ function connect() {
     oppHandCount.value = 13
     readyStatus.value = null
     autoReadyRequested.value = false
+    aiPracticePending.value = false
   }
 }
 
@@ -577,6 +656,21 @@ function joinAndReady() {
     return
   }
   ready()
+}
+
+function playWithAi() {
+  if (!canAccessAiPractice.value) return
+  if (gameInProgress.value) return
+  if (isReady.value) return
+  aiPracticePending.value = true
+  if (!connected.value) {
+    if (!ws.value) {
+      connect()
+    }
+    return
+  }
+  if (seat.value === null) return
+  sendPracticeRequestAndReady()
 }
 
 function selectTile(index: number) {
@@ -684,12 +778,18 @@ export function useGameStore() {
     user,
     username,
     nickname,
+    displayUsername,
+    displayNickname,
     userScore,
+    authToken,
+    vipLevel,
+    canAccessAiPractice,
     roomId,
     ws,
     connected,
     seat,
     opponent,
+    displayOpponent,
     status,
     readyStatus,
     hand,
@@ -731,6 +831,7 @@ export function useGameStore() {
     connect,
     ready,
     joinAndReady,
+    playWithAi,
     selectTile,
     confirmDiscard,
     doAction,
@@ -741,6 +842,7 @@ export function useGameStore() {
     saveRoomInfo,
     clearRoomInfo,
     setUser,
+    setAuthToken,
     saveUserInfo,
     clearUserInfo,
   }

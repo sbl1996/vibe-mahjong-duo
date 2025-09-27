@@ -3,7 +3,7 @@
     <section class="connection-card">
       <div class="field-group">
         <label>昵称</label>
-        <input :value="username" disabled />
+        <input :value="displayUsername" disabled />
       </div>
       <div class="field-group">
         <label>房间号</label>
@@ -16,6 +16,14 @@
           :disabled="joinButtonDisabled"
         >
           {{ joinButtonLabel }}
+        </button>
+        <button
+          v-if="canAccessAiPractice"
+          :class="practiceButtonClasses"
+          @click="playWithAi"
+          :disabled="practiceButtonDisabled"
+        >
+          AI陪练（不计分）
         </button>
       </div>
     </section>
@@ -31,7 +39,20 @@ import { useGameStore } from '../stores/game'
 const router = useRouter()
 const store = useGameStore()
 
-const { username, roomId, connected, isReady, joinAndReady, ws, gameInProgress, gameResult } = store
+
+const {
+  displayUsername,
+  roomId,
+  connected,
+  isReady,
+  joinAndReady,
+  playWithAi,
+  ws,
+  gameInProgress,
+  gameResult,
+  canAccessAiPractice,
+} = store
+
 
 const joinButtonLabel = computed(() => {
   if (isReady.value) return '准备就绪'
@@ -50,6 +71,19 @@ const joinButtonDisabled = computed(() => {
 const joinButtonClasses = computed(() => ({
   'ready-button': true,
   ready: isReady.value,
+  connecting: !connected.value && Boolean(ws.value),
+}))
+
+const practiceButtonDisabled = computed(() => {
+  if (!canAccessAiPractice.value) return true
+  if (gameInProgress.value) return true
+  if (isReady.value) return true
+  if (!connected.value && Boolean(ws.value)) return true
+  return false
+})
+
+const practiceButtonClasses = computed(() => ({
+  'ready-button': true,
   connecting: !connected.value && Boolean(ws.value),
 }))
 
@@ -78,6 +112,12 @@ watch(
 .connection-card {
   max-width: 900px;
   margin: 0 auto;
+}
+
+.action-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .user-info {

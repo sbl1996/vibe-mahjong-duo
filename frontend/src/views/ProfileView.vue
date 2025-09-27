@@ -6,7 +6,7 @@
           <div class="hero-top">
             <div class="hero-meta">
               <span class="identity-chip">玩家档案</span>
-              <h1 class="username">{{ user?.username || '未知玩家' }}</h1>
+              <h1 class="username">{{ displayUsername || '未知玩家' }}</h1>
               <p class="hero-subtitle">专属积分与战绩总览</p>
             </div>
             <div class="score-display">
@@ -42,7 +42,7 @@
 
           <div class="records-list" v-if="records.length">
             <div v-for="record in records" :key="record.id" class="record-card">
-              <span class="opponent-name">{{ record.opponent_username || '未知玩家' }}</span>
+              <span class="opponent-name">{{ formatDisplayNameOrFallback(record.opponent_username, '未知玩家') }}</span>
               <span class="record-result" :class="`is-${record.result}`">
                 {{ getResultText(record.result) }}
               </span>
@@ -76,7 +76,7 @@
               <span class="leaderboard-rank" :class="rankClass(index)">
                 {{ String(index + 1).padStart(2, '0') }}
               </span>
-              <span class="leaderboard-name">{{ player.username }}</span>
+              <span class="leaderboard-name">{{ formatDisplayNameOrFallback(player.username, '未知玩家') }}</span>
               <span class="leaderboard-score">{{ player.score }}</span>
             </div>
           </div>
@@ -93,9 +93,10 @@
 import { ref, onMounted, computed } from 'vue'
 import GameLayout from '../components/GameLayout.vue'
 import { useGameStore } from '../stores/game'
+import { formatDisplayNameOrFallback } from '../utils/displayName'
 
 const store = useGameStore()
-const { user, setUser } = store
+const { user, setUser, displayUsername } = store
 
 const stats = ref({
   total_games: 0,

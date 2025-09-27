@@ -13,7 +13,7 @@
         </div>
         <div class="result-item">
           <span class="item-label">对手昵称</span>
-          <span class="item-value">{{ opponent || '未知' }}</span>
+          <span class="item-value">{{ displayOpponent || '未知' }}</span>
         </div>
         <div class="result-item">
           <span class="item-label">胜负判定</span>
@@ -25,8 +25,8 @@
         v-if="displayFanSummary"
         :summary="displayFanSummary"
         :seat="seat"
-        :nickname="nickname"
-        :opponent="opponent"
+        :nickname="displayNickname"
+        :opponent="displayOpponent"
         title="积分结算"
       />
 
@@ -142,8 +142,8 @@ const store = useGameStore()
 const {
   gameResult,
   seat,
-  opponent,
-  nickname,
+  displayNickname,
+  displayOpponent,
   t2s,
   tileImage,
   finalHandSelf,
@@ -169,9 +169,9 @@ const winnerName = computed(() => {
     return '本局流局'
   }
   if (winner === seat.value) {
-    return `${nickname.value || '我方'} 获胜！`
+    return `${displayNickname.value || '我方'} 获胜！`
   }
-  return `${opponent.value || '对手'} 获胜`
+  return `${displayOpponent.value || '对手'} 获胜`
 })
 
 const reasonDescription = computed(() => {
@@ -188,10 +188,10 @@ const reasonDescription = computed(() => {
     const oppSeatId = seatValue === null ? null : 1 - seatValue
     if (typeof result.by === 'number') {
       if (seatValue !== null && result.by === seatValue) {
-        return `${nickname.value || '我方'} 主动结束对局`
+        return `${displayNickname.value || '我方'} 主动结束对局`
       }
       if (oppSeatId !== null && result.by === oppSeatId) {
-        return `${opponent.value || '对手'} 主动结束对局`
+        return `${displayOpponent.value || '对手'} 主动结束对局`
       }
       return `座位 ${result.by} 主动结束对局`
     }

@@ -87,9 +87,10 @@ const handleLogin = async () => {
 
     const data = await response.json()
 
-    if (response.ok && data.success && data.user) {
+    if (response.ok && data.success && data.user && typeof data.token === 'string') {
       // 登录成功，同步用户信息到全局状态
       store.setUser(data.user)
+      store.setAuthToken(data.token)
       // 跳转到游戏房间页面
       router.push('/join')
     } else {
