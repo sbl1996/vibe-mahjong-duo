@@ -270,6 +270,7 @@ class Database:
                     "created_at": row[3]
                 }
                 for row in rows
+                if row[1] != "C"
             ]
         except Exception as e:
             print(f"获取排行榜错误: {e}")

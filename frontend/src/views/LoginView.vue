@@ -12,7 +12,7 @@
           <label>用户名</label>
           <input
             v-model="username"
-            placeholder="请输入用户名 (A/B/C)"
+            placeholder="请输入用户名"
             @keyup.enter="handleLogin"
           />
         </div>
@@ -39,6 +39,10 @@
           >
             {{ loading ? '登录中...' : '登录' }}
           </button>
+        </div>
+
+        <div class="helper-links">
+          <router-link to="/rules" class="inline-link">查看番数规则</router-link>
         </div>
 
         <div class="help-text">
@@ -209,6 +213,22 @@ const handleLogin = async () => {
   display: flex;
   gap: 16px;
   margin-top: 8px;
+}
+
+.helper-links {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.inline-link {
+  color: #9db3ff;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.inline-link:hover {
+  text-decoration: underline;
 }
 
 button {

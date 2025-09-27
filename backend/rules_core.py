@@ -548,7 +548,7 @@ def compute_score_summary(
             if is_menzen(win_player.hand, win_player.melds):
                 _add_fan(player_scores[winner], "门前清", 1, "没有碰、明杠")
 
-            # 牌型番 —— 对对胡 + 三暗刻的叠加规则 (UPDATED)
+            # 牌型番 —— 对对胡 + 三暗刻的叠加规则
             toitoi = is_all_triplets(win_player.hand, win_player.melds)
             if toitoi:
                 _add_fan(player_scores[winner], "对对胡", 2, "四个刻子+将眼")
@@ -556,20 +556,20 @@ def compute_score_summary(
             concealed_triplets = count_concealed_triplets(win_player.hand, win_player.melds)
             if concealed_triplets >= 3:
                 if toitoi:
-                    _add_fan(player_scores[winner], "三暗刻（与对对胡叠加）", 1, "三暗刻作为额外+1")  # UPDATED
+                    _add_fan(player_scores[winner], "三暗刻（与对对胡叠加）", 1, "三暗刻作为额外+1")
                 else:
                     _add_fan(player_scores[winner], "三暗刻", 2, "三个暗刻")
 
             if is_full_flush(win_player.hand, win_player.melds):
-                _add_fan(player_scores[winner], "清一色", 4, "同花色牌型")  # UPDATED
+                _add_fan(player_scores[winner], "清一色", 2, "同花色牌型")
 
             # 断幺九 +1
             if is_tanyao(win_player.hand, win_player.melds):
                 _add_fan(player_scores[winner], "断幺九", 1, "全2-8")
 
-            # 平和 +1（定义：门前清且四面子全顺子）
+            # 平和 +2（定义：门前清且四面子全顺子）
             if is_menzen(win_player.hand, win_player.melds) and is_all_sequences(win_player.hand, win_player.melds):
-                _add_fan(player_scores[winner], "平和", 1, "门清四顺子")
+                _add_fan(player_scores[winner], "平和", 2, "门清四顺子")
 
             # 杠的番数（非役满时计算），每手上限 +2
             kong_count = count_kongs(win_player.melds)
@@ -577,7 +577,7 @@ def compute_score_summary(
                 kong_fan = min(kong_count, 2)  # 每手杠番上限 +2
                 _add_fan(player_scores[winner], "杠", kong_fan, f"{kong_count}个杠（计入{kong_fan}番）")
 
-            # 普通手封顶 7 番 (UPDATED)
+            # 普通手封顶 7 番
             if player_scores[winner]["fan_total"] > 7:
                 # 直接封顶为 7，不额外添加负项，保持 breakdown 简洁
                 player_scores[winner]["fan_total"] = 7

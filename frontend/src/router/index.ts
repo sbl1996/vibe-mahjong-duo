@@ -21,6 +21,11 @@ const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/rules',
+      name: 'fan-rules',
+      component: () => import('../views/FanRulesView.vue'),
+    },
+    {
       path: '/victory',
       name: 'victory',
       component: () => import('../views/VictoryView.vue'),

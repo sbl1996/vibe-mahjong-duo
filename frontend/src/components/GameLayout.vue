@@ -5,18 +5,21 @@
         <div class="title-block">
           <h1>Mahjong Duo</h1>
         </div>
-        <nav class="navigation" v-if="user">
-          <router-link to="/join" class="nav-link" active-class="active">开一局</router-link>
-          <router-link to="/profile" class="nav-link" active-class="active">个人信息</router-link>
-          <button
-            v-if="gameInProgress"
-            class="endgame-btn"
-            type="button"
-            @click="handleEndGame"
-          >
-            结束对局
-          </button>
-          <button class="logout-btn" @click="handleLogout">退出登录</button>
+        <nav class="navigation">
+          <router-link to="/rules" class="nav-link" active-class="active">番数规则</router-link>
+          <template v-if="user">
+            <router-link to="/join" class="nav-link" active-class="active">开一局</router-link>
+            <router-link to="/profile" class="nav-link" active-class="active">个人信息</router-link>
+            <button
+              v-if="gameInProgress"
+              class="endgame-btn"
+              type="button"
+              @click="handleEndGame"
+            >
+              结束对局
+            </button>
+            <button class="logout-btn" @click="handleLogout">退出登录</button>
+          </template>
         </nav>
         <div class="header-status">
           <div class="status-line">
