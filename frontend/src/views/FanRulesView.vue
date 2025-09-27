@@ -143,6 +143,7 @@ const scoringTable = computed(() => {
   margin: 0 0 12px;
   font-size: 1.6rem;
   letter-spacing: 0.08em;
+  color: #dee7ff;
 }
 
 .rules-hero p {
