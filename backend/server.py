@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-import json, asyncio, random
+import json, asyncio, random, secrets
 from pathlib import Path
 from typing import Dict, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from rules_core import *
+from advisor import advise_on_draw, advise_on_opponent_discard
 from database import db, init_database
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -52,9 +53,15 @@ async def login(request: Request):
         # 验证用户
         user = await db.authenticate_user(username, password)
         if user:
+            token = secrets.token_urlsafe(32)
+            authenticated_sessions[token] = {
+                "user_id": user["id"],
+                "username": user["username"],
+            }
             return JSONResponse(content={
                 "success": True,
-                "user": user
+                "user": user,
+                "token": token
             })
         else:
             return JSONResponse(
@@ -132,6 +139,7 @@ class Session:
         self.seat: Optional[int] = None
         self.user_id: Optional[int] = None
         self.username: Optional[str] = None
+        self.vip_level: int = 0
 
     async def send(self, data: dict):
         await self.ws.send_text(json.dumps(data, ensure_ascii=False))
@@ -144,6 +152,9 @@ class Room:
         self.state: Optional[GameState] = None
         self.lock = asyncio.Lock()
         self.player_names: Dict[int, str] = {}  # 座位对应的玩家名称
+        self.ai_seat: Optional[int] = None
+        self.practice_mode: bool = False
+        self.ai_name = "AI陪练"
 
     def opponent(self, seat: int) -> Optional[Session]:
         return self.sess.get(1-seat)
@@ -151,7 +162,58 @@ class Room:
     def get_player_name(self, seat: int) -> str:
         """获取指定座位玩家的名字"""
         session = self.sess.get(seat)
-        return session.username if session and session.username else f"Player{seat}"
+        if session and session.username:
+            return session.username
+        if seat in self.player_names:
+            return self.player_names[seat]
+        return f"Player{seat}"
+
+    def is_ai_seat(self, seat: int) -> bool:
+        return self.ai_seat is not None and self.ai_seat == seat
+
+    def seat_active(self, seat: int) -> bool:
+        return seat in self.sess or self.is_ai_seat(seat)
+
+    def _ensure_ai_ready(self):
+        if self.practice_mode and self.ai_seat is not None:
+            self.ready[self.ai_seat] = True
+
+    async def _broadcast_room_status(self):
+        await self.broadcast({"type":"room_status","players":[self.seat_active(0), self.seat_active(1)]})
+
+    def disable_ai_practice(self):
+        if self.ai_seat is None:
+            return
+        seat = self.ai_seat
+        self.practice_mode = False
+        self.ai_seat = None
+        if self.player_names.get(seat) == self.ai_name:
+            self.player_names.pop(seat, None)
+        self.ready[seat] = False
+
+    async def enable_ai_practice(self, requester: Session):
+        if (requester.vip_level or 0) < 1:
+            await requester.send({"type":"error","detail":"VIP等级不足，无法启用AI陪练"})
+            return
+        if requester.seat is None:
+            return
+        if self.state and not getattr(self.state, "ended", False):
+            await requester.send({"type":"error","detail":"对局进行中，暂不可启用AI陪练"})
+            return
+        target = 1 - requester.seat
+        if self.ai_seat is not None:
+            target = self.ai_seat
+        if target in self.sess and self.sess[target] is not requester:
+            await requester.send({"type":"error","detail":"对面已有真人玩家，无法启用AI陪练"})
+            return
+        self.practice_mode = True
+        self.ai_seat = target
+        self.player_names[target] = self.ai_name
+        self._ensure_ai_ready()
+        await requester.send({"type":"practice_enabled","seat":target})
+        await self._broadcast_room_status()
+        await self.broadcast({"type":"ready_status","ready":dict(self.ready)})
+        await self.try_start()
 
     async def broadcast(self, data: dict):
         for s in self.sess.values():
@@ -224,7 +286,9 @@ class Room:
 
 
     async def try_start(self):
-        if len(self.sess) != 2:
+        self._ensure_ai_ready()
+        active_seats = [seat for seat in (0, 1) if self.seat_active(seat)]
+        if len(active_seats) != 2:
             return
         if not (self.ready.get(0) and self.ready.get(1)):
             return
@@ -261,7 +325,9 @@ class Room:
         if not self.state or self.state.ended: return
         seat = self.state.turn
         me = self.sess.get(seat)
-        if not me: return
+        ai_turn = self.is_ai_seat(seat)
+        if not ai_turn and not me:
+            return
         # 如果需要摸牌（自己13张）
         if len(self.state.players[seat].hand)%3==1 and self.state.last_discard is None:
             if not self.state.wall:
@@ -280,6 +346,11 @@ class Room:
                     self.state, tile = draw(self.state, seat)
             await self.broadcast({"type":"event","ev":{"type":"draw","seat":seat,"tile": (tile if True else None)}})
         await self.sync_player(seat)
+        if ai_turn:
+            await self._ai_take_turn(lock_held=lock_held)
+            return
+        if not me:
+            return
         # 下发 choices
         choices = legal_choices(self.state, seat)
         await me.send({"type":"choices","actions":choices})
@@ -287,6 +358,14 @@ class Room:
     async def step_after_discard(self, *, lock_held: bool = False):
         # 对手可响应：碰/杠/荣和/过
         if not self.state: return
+
+        if self.is_ai_seat(self.state.turn):
+            if lock_held:
+                await self._ai_respond_to_discard(lock_held=True)
+            else:
+                async with self.lock:
+                    await self._ai_respond_to_discard(lock_held=True)
+            return
 
         async def _inner():
             if not self.state: return
@@ -310,6 +389,137 @@ class Room:
             async with self.lock:
                 await _inner()
 
+    async def _ai_take_turn(self, *, lock_held: bool):
+        async def inner():
+            if not self.state or self.state.ended:
+                return
+            seat = self.state.turn
+            if not self.is_ai_seat(seat):
+                return
+            advice = advise_on_draw(self.state, seat) or {}
+            action = advice.get("action")
+
+            if action == "hu":
+                self.state = replace(self.state, ended=True)
+                score_summary = compute_score_summary(self.state, seat, "zimo")
+                await self.broadcast({
+                    "type": "game_end",
+                    "result": {"winner": seat, "reason": "zimo", "score": score_summary},
+                    "final_view": self._final_view_payload(),
+                })
+                await update_game_scores(self, seat, "zimo", score_summary)
+                return
+
+            if action == "kong":
+                tile = advice.get("tile")
+                style = advice.get("style") or "concealed"
+                if tile is None:
+                    action = "discard"
+                else:
+                    try:
+                        if style == "concealed":
+                            self.state = kong_concealed(self.state, seat, tile)
+                        elif style == "added":
+                            self.state = kong_added(self.state, seat, tile)
+                        else:
+                            # 默认按明杠处理（一般不会出现）
+                            self.state = kong_concealed(self.state, seat, tile)
+                            style = "concealed"
+                    except Exception:
+                        action = "discard"
+                    else:
+                        ev_payload = {"type": "kong", "style": style, "seat": seat}
+                        if style != "concealed":
+                            ev_payload["tile"] = tile
+                        await self.broadcast({"type": "event", "ev": ev_payload})
+                        await self.sync_all()
+                        await self.step_auto(lock_held=True)
+                        return
+
+            if action != "discard":
+                action = "discard"
+            tile = advice.get("tile") if advice else None
+            if tile is None:
+                choices = legal_choices(self.state, seat)
+                discard_choice = next((c for c in choices if c.get("type") == "discard"), None)
+                if discard_choice:
+                    tile = discard_choice.get("tile")
+            if tile is None:
+                return
+            try:
+                self.state = discard(self.state, seat, tile)
+            except Exception:
+                return
+            await self.broadcast({"type": "event", "ev": {"type": "discard", "seat": seat, "tile": tile}})
+            await self.sync_all()
+            await self.step_after_discard(lock_held=True)
+
+        if lock_held:
+            await inner()
+        else:
+            async with self.lock:
+                await inner()
+
+    async def _ai_respond_to_discard(self, *, lock_held: bool):
+        if not self.state or self.state.ended or self.state.last_discard is None:
+            return
+
+        async def inner():
+            if not self.state or self.state.ended or self.state.last_discard is None:
+                return
+            seat = self.state.turn
+            if not self.is_ai_seat(seat):
+                return
+            from_seat, tile_from = self.state.last_discard
+            advice = advise_on_opponent_discard(self.state, seat) or {}
+            action = advice.get("action") or "pass"
+            tile = advice.get("tile") if advice.get("tile") is not None else tile_from
+
+            if action == "hu":
+                self.state = replace(self.state, ended=True)
+                score_summary = compute_score_summary(self.state, seat, "ron")
+                await self.broadcast({
+                    "type": "game_end",
+                    "result": {"winner": seat, "reason": "ron", "tile": tile, "score": score_summary},
+                    "final_view": self._final_view_payload({seat: tile}),
+                })
+                await update_game_scores(self, seat, "ron", score_summary)
+                return
+
+            if action == "peng" and tile is not None:
+                try:
+                    self.state = claim_peng(self.state, seat, from_seat, tile)
+                except Exception:
+                    action = "pass"
+                else:
+                    await self.broadcast({"type": "event", "ev": {"type": "peng", "seat": seat, "tile": tile}})
+                    await self.sync_all()
+                    await self.step_auto(lock_held=True)
+                    return
+
+            if action == "kong" and tile is not None:
+                try:
+                    self.state = claim_kong_exposed(self.state, seat, from_seat, tile)
+                except Exception:
+                    action = "pass"
+                else:
+                    await self.broadcast({"type": "event", "ev": {"type": "kong", "style": "exposed", "seat": seat, "tile": tile}})
+                    await self.sync_all()
+                    await self.step_auto(lock_held=True)
+                    return
+
+            # pass 或无法执行其他动作
+            self.state = replace(self.state, last_discard=None)
+            await self.broadcast({"type": "event", "ev": {"type": "pass", "seat": seat}})
+            await self.sync_all()
+            await self.step_auto(lock_held=True)
+
+        if lock_held:
+            await inner()
+        else:
+            async with self.lock:
+                await inner()
+
 rooms: Dict[str, Room] = {}
 
 async def attach(ws: WebSocket) -> Session:
@@ -330,13 +540,43 @@ async def auth_ws_endpoint(ws: WebSocket):
                 # 用户认证
                 username = msg.get("username")
                 password = msg.get("password")
-                token = msg.get("token")  # 可以支持token认证
+                token = msg.get("token")  # token 认证更安全，优先使用
+
+                if token:
+                    session_info = authenticated_sessions.get(token)
+                    if not session_info:
+                        await sess.send({
+                            "type": "error",
+                            "detail": "登录状态已过期，请重新登录"
+                        })
+                        continue
+
+                    user = await db.get_user_by_username(session_info.get("username", ""))
+                    if not user:
+                        await sess.send({
+                            "type": "error",
+                            "detail": "用户信息不存在，请重新登录"
+                        })
+                        continue
+
+                    session_info["user_id"] = user["id"]
+                    authenticated_sessions[token] = session_info
+
+                    sess.user_id = user["id"]
+                    sess.username = user["username"]
+                    sess.vip_level = int(user.get("vip_level", 0))
+                    await sess.send({
+                        "type": "authentication_success",
+                        "user": user
+                    })
+                    continue
 
                 if username and password:
                     user = await db.authenticate_user(username, password)
                     if user:
                         sess.user_id = user["id"]
                         sess.username = user["username"]
+                        sess.vip_level = int(user.get("vip_level", 0))
                         await sess.send({
                             "type": "authentication_success",
                             "user": user
@@ -405,14 +645,16 @@ async def auth_ws_endpoint(ws: WebSocket):
                             continue
 
                 # 加入房间
+                if room.is_ai_seat(seat):
+                    room.disable_ai_practice()
                 room.sess[seat] = sess
                 room.player_names[seat] = sess.username
                 sess.room, sess.seat = room, seat
                 room.ready[seat] = False
                 await sess.send({"type":"room_joined","room_id":rid,"seat":seat})
+                room._ensure_ai_ready()
                 await room.broadcast({"type":"ready_status","ready":dict(room.ready)})
-                if room.opponent(seat):
-                    await room.broadcast({"type":"room_status","players":[0 in room.sess, 1 in room.sess]})
+                await room._broadcast_room_status()
 
                 # 通知房间有玩家重新加入
                 await room.broadcast({"type":"player_reconnected","seat":seat,"username":sess.username})
@@ -435,8 +677,17 @@ async def auth_ws_endpoint(ws: WebSocket):
             elif t == "ready":
                 if not sess.room or sess.seat is None: continue
                 sess.room.ready[sess.seat] = True
+                sess.room._ensure_ai_ready()
                 await sess.room.broadcast({"type":"ready_status","ready":dict(sess.room.ready)})
                 await sess.room.try_start()
+
+            elif t == "practice_ai":
+                if not sess.room:
+                    continue
+                await sess.room.enable_ai_practice(sess)
+
+            elif t == "request_hint":
+                await handle_ai_hint_request(sess)
 
             elif t == "end_game":
                 await handle_end_game_request(sess)
@@ -561,12 +812,13 @@ async def auth_ws_endpoint(ws: WebSocket):
             # 保留 player_names 记录，允许重新加入
             # 只有当两个玩家都断线时才重置游戏
             if len(r.sess) == 0:
+                r.disable_ai_practice()
                 r.state = None
                 r.ready = {0: False, 1: False}
                 # 清理玩家名称记录
                 r.player_names.clear()
             # 通知房间玩家状态变化（包含在线/离线状态）
-            await r.broadcast({"type":"room_status","players":[0 in r.sess, 1 in r.sess]})
+            await r._broadcast_room_status()
             await r.broadcast({"type":"ready_status","ready":dict(r.ready)})
             # 通知有玩家掉线
             await r.broadcast({"type":"player_disconnected","seat":seat,"username":sess.username})
@@ -619,6 +871,55 @@ async def update_game_scores(room: Room, winner_seat: int, reason: str, score_su
 
     except Exception as e:
         print(f"更新积分错误: {e}")
+
+
+async def handle_ai_hint_request(sess: Session):
+    """处理玩家请求AI提示的逻辑"""
+    if not sess.room or sess.seat is None:
+        await sess.send({"type": "ai_hint", "error": "尚未加入房间"})
+        return
+
+    if (sess.vip_level or 0) < 1:
+        await sess.send({"type": "ai_hint", "error": "VIP等级不足，无法使用AI提示"})
+        return
+
+    room = sess.room
+    hint_payload: Optional[dict] = None
+    phase: Optional[str] = None
+
+    async with room.lock:
+        state = room.state
+        if state is None or getattr(state, "ended", False):
+            await sess.send({"type": "ai_hint", "error": "当前没有进行中的对局"})
+            return
+
+        if state.turn != sess.seat:
+            await sess.send({"type": "ai_hint", "error": "当前不是你的操作回合"})
+            return
+
+        try:
+            if state.last_discard is None:
+                hand_len = len(state.players[sess.seat].hand)
+                if hand_len % 3 != 2:
+                    raise ValueError("hand not ready for advice")
+                hint_payload = advise_on_draw(state, sess.seat) or {}
+                phase = "self_turn"
+            else:
+                hint_payload = advise_on_opponent_discard(state, sess.seat) or {}
+                phase = "opponent_discard"
+        except AssertionError:
+            await sess.send({"type": "ai_hint", "error": "当前状态无法生成AI提示"})
+            return
+        except Exception as e:
+            print(f"AI hint error: {e}")
+            await sess.send({"type": "ai_hint", "error": "AI提示计算失败，请稍后重试"})
+            return
+
+    if not hint_payload:
+        await sess.send({"type": "ai_hint", "error": "AI暂时没有可用提示"})
+        return
+
+    await sess.send({"type": "ai_hint", "hint": hint_payload, "phase": phase})
 
 
 async def handle_end_game_request(sess: Session):
@@ -705,14 +1006,16 @@ async def ws_endpoint(ws: WebSocket):
                             continue
 
                 # 加入房间
+                if room.is_ai_seat(seat):
+                    room.disable_ai_practice()
                 room.sess[seat] = sess
                 room.player_names[seat] = sess.username
                 sess.room, sess.seat = room, seat
                 room.ready[seat] = False
                 await sess.send({"type":"room_joined","room_id":rid,"seat":seat})
+                room._ensure_ai_ready()
                 await room.broadcast({"type":"ready_status","ready":dict(room.ready)})
-                if room.opponent(seat):
-                    await room.broadcast({"type":"room_status","players":[0 in room.sess, 1 in room.sess]})
+                await room._broadcast_room_status()
 
                 # 通知房间有玩家重新加入
                 await room.broadcast({"type":"player_reconnected","seat":seat,"username":sess.username})
@@ -735,8 +1038,14 @@ async def ws_endpoint(ws: WebSocket):
             elif t == "ready":
                 if not sess.room or sess.seat is None: continue
                 sess.room.ready[sess.seat] = True
+                sess.room._ensure_ai_ready()
                 await sess.room.broadcast({"type":"ready_status","ready":dict(sess.room.ready)})
                 await sess.room.try_start()
+
+            elif t == "practice_ai":
+                if not sess.room:
+                    continue
+                await sess.room.enable_ai_practice(sess)
 
             elif t == "end_game":
                 await handle_end_game_request(sess)
@@ -857,12 +1166,13 @@ async def ws_endpoint(ws: WebSocket):
             # 保留 player_names 记录，允许重新加入
             # 只有当两个玩家都断线时才重置游戏
             if len(r.sess) == 0:
+                r.disable_ai_practice()
                 r.state = None
                 r.ready = {0: False, 1: False}
                 # 清理玩家名称记录
                 r.player_names.clear()
             # 通知房间玩家状态变化（包含在线/离线状态）
-            await r.broadcast({"type":"room_status","players":[0 in r.sess, 1 in r.sess]})
+            await r._broadcast_room_status()
             await r.broadcast({"type":"ready_status","ready":dict(r.ready)})
             # 通知有玩家掉线
             await r.broadcast({"type":"player_disconnected","seat":seat,"username":sess.username})

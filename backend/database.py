@@ -35,9 +35,18 @@ class Database:
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 score INTEGER DEFAULT 1000,
+                vip_level INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        # Ensure vip_level column exists for legacy databases
+        cursor = await self._connection.execute("PRAGMA table_info(users)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        if "vip_level" not in columns:
+            await self._connection.execute(
+                "ALTER TABLE users ADD COLUMN vip_level INTEGER NOT NULL DEFAULT 0"
+            )
 
         # 创建对局记录表
         await self._connection.execute('''
@@ -60,15 +69,15 @@ class Database:
         """密码哈希"""
         return hashlib.sha256(password.encode('utf-8')).hexdigest()
 
-    async def create_user(self, username: str, password: str, initial_score: int = 1000) -> bool:
+    async def create_user(self, username: str, password: str, initial_score: int = 1000, vip_level: int = 0) -> bool:
         """创建用户"""
         try:
             await self.connect()
             password_hash = self._hash_password(password)
 
             await self._connection.execute(
-                "INSERT INTO users (username, password_hash, score) VALUES (?, ?, ?)",
-                (username, password_hash, initial_score)
+                "INSERT INTO users (username, password_hash, score, vip_level) VALUES (?, ?, ?, ?)",
+                (username, password_hash, initial_score, vip_level)
             )
             await self._connection.commit()
             return True
@@ -86,7 +95,7 @@ class Database:
             password_hash = self._hash_password(password)
 
             cursor = await self._connection.execute(
-                "SELECT id, username, score FROM users WHERE username = ? AND password_hash = ?",
+                "SELECT id, username, score, vip_level FROM users WHERE username = ? AND password_hash = ?",
                 (username, password_hash)
             )
             result = await cursor.fetchone()
@@ -95,7 +104,8 @@ class Database:
                 return {
                     "id": result[0],
                     "username": result[1],
-                    "score": result[2]
+                    "score": result[2],
+                    "vip_level": result[3]
                 }
             return None
         except Exception as e:
@@ -107,7 +117,7 @@ class Database:
         try:
             await self.connect()
             cursor = await self._connection.execute(
-                "SELECT id, username, score FROM users WHERE username = ?",
+                "SELECT id, username, score, vip_level FROM users WHERE username = ?",
                 (username,)
             )
             result = await cursor.fetchone()
@@ -116,7 +126,8 @@ class Database:
                 return {
                     "id": result[0],
                     "username": result[1],
-                    "score": result[2]
+                    "score": result[2],
+                    "vip_level": result[3]
                 }
             return None
         except Exception as e:
@@ -273,13 +284,14 @@ async def init_database():
 
     # 创建默认用户
     default_users = [
-        {"username": "A", "password": "A", "score": 1000},
-        {"username": "B", "password": "B", "score": 1000},
-        {"username": "C", "password": "C", "score": 1000},
+        {"username": "A", "password": "A", "score": 1000, "vip_level": 0},
+        {"username": "B", "password": "B", "score": 1000, "vip_level": 0},
+        {"username": "C", "password": "C", "score": 1000, "vip_level": 0},
+        {"username": "H", "password": "K", "score": 1000, "vip_level": 1},
     ]
 
     for user in default_users:
         exists = await db.get_user_by_username(user["username"])
         if not exists:
-            await db.create_user(user["username"], user["password"], user["score"])
+            await db.create_user(user["username"], user["password"], user["score"], user["vip_level"])
             print(f"创建默认用户: {user['username']}")

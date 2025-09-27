@@ -45,6 +45,15 @@ export type FanSummary = {
   players: Record<string, FanPlayerScore>
 }
 
+export type AiHintPhase = 'self_turn' | 'opponent_discard'
+export type AiHintPayload = {
+  action: string
+  tile?: TileValue
+  style?: string
+  reason?: string
+  detail?: Record<string, unknown>
+}
+
 type FinalSeatView = {
   hand: number[]
   melds: Meld[]
@@ -80,6 +89,7 @@ const autoReadyRequested = ref(false)
 const aiPracticePending = ref(false)
 const vipLevel = computed(() => user.value?.vip_level ?? 0)
 const canAccessAiPractice = computed(() => vipLevel.value >= 1)
+const canAccessAiHint = computed(() => vipLevel.value >= 1)
 
 const seat = ref<number | null>(null)
 const opponent = ref('')
@@ -98,6 +108,10 @@ const actions = ref<Action[]>([])
 const events = ref<any[]>([])
 const gameResult = ref<any | null>(null)
 const finalView = ref<FinalViewPayload | null>(null)
+const aiHint = ref<AiHintPayload | null>(null)
+const aiHintPhase = ref<AiHintPhase | null>(null)
+const aiHintPending = ref(false)
+const aiHintError = ref<string | null>(null)
 
 const selectedHandIndex = ref<number | null>(null)
 const lastDrawnIndex = ref<number | null>(null)
@@ -327,6 +341,21 @@ watch(discardActions, (newActions) => {
   }
 })
 
+watch(actions, () => {
+  aiHint.value = null
+  aiHintPhase.value = null
+  aiHintError.value = null
+  aiHintPending.value = false
+})
+
+watch(gameResult, (result) => {
+  if (!result) return
+  aiHint.value = null
+  aiHintPhase.value = null
+  aiHintError.value = null
+  aiHintPending.value = false
+})
+
 function t2s(t: TileValue) {
   if (typeof t !== 'number' || !Number.isFinite(t) || t < 0) return '未知'
   const suit = ['万', '条', '筒'][Math.floor(t / 9)]
@@ -467,6 +496,24 @@ function attemptAiPractice() {
   sendPracticeRequestAndReady()
 }
 
+function requestAiHint() {
+  if (!canAccessAiHint.value) {
+    aiHintError.value = 'VIP等级不足，无法使用AI提示'
+    aiHintPending.value = false
+    return
+  }
+  if (!connected.value) {
+    aiHintError.value = '尚未连接服务器'
+    return
+  }
+  if (aiHintPending.value) return
+  aiHintPending.value = true
+  aiHintError.value = null
+  aiHint.value = null
+  aiHintPhase.value = null
+  send({ type: 'request_hint' })
+}
+
 function connect() {
   if (ws.value) return
   if (!user.value) {
@@ -530,6 +577,10 @@ function connect() {
       gameInProgress.value = true
       readyStatus.value = null
       finalView.value = null
+      aiHint.value = null
+      aiHintPhase.value = null
+      aiHintError.value = null
+      aiHintPending.value = false
     } else if (msg.type === 'you_are') {
       opponent.value = msg.opponent
       username.value = msg.username
@@ -539,6 +590,9 @@ function connect() {
       oppHandCount.value = typeof msg.opp_hand_count === 'number' ? msg.opp_hand_count : oppHandCount.value
       discSelf.value = msg.discards_self || []
       discOpp.value = msg.discards_opp || []
+      aiHint.value = null
+      aiHintPhase.value = null
+      aiHintError.value = null
     } else if (msg.type === 'sync_hand') {
       hand.value = msg.hand || []
     } else if (msg.type === 'sync_view') {
@@ -554,8 +608,23 @@ function connect() {
       }
       // 如果接收到 sync_view 消息，说明有游戏状态，设置为游戏进行中
       gameInProgress.value = true
+      aiHint.value = null
+      aiHintPhase.value = null
+      aiHintError.value = null
     } else if (msg.type === 'choices') {
       actions.value = msg.actions || []
+    } else if (msg.type === 'ai_hint') {
+      aiHintPending.value = false
+      const phaseValue = msg.phase === 'opponent_discard' || msg.phase === 'self_turn' ? msg.phase : null
+      if (typeof msg.error === 'string' && msg.error.length > 0) {
+        aiHint.value = null
+        aiHintPhase.value = phaseValue
+        aiHintError.value = msg.error
+        return
+      }
+      aiHintError.value = null
+      aiHintPhase.value = phaseValue
+      aiHint.value = msg.hint ?? null
     } else if (msg.type === 'event') {
       events.value.push(msg.ev)
       const evv = msg.ev
@@ -589,6 +658,10 @@ function connect() {
         lastDrawnIndex.value = null
         pendingDrawTile.value = null
       }
+      aiHint.value = null
+      aiHintPhase.value = null
+      aiHintError.value = null
+      aiHintPending.value = false
     } else if (msg.type === 'game_end') {
       gameResult.value = msg.result
       finalView.value = msg.final_view ?? null
@@ -784,6 +857,7 @@ export function useGameStore() {
     authToken,
     vipLevel,
     canAccessAiPractice,
+    canAccessAiHint,
     roomId,
     ws,
     connected,
@@ -806,6 +880,10 @@ export function useGameStore() {
     finalHandOpp,
     finalMeldsSelf,
     finalMeldsOpp,
+    aiHint,
+    aiHintPhase,
+    aiHintPending,
+    aiHintError,
     selectedHandIndex,
     lastDrawnIndex,
     pendingDrawTile,
@@ -832,6 +910,7 @@ export function useGameStore() {
     ready,
     joinAndReady,
     playWithAi,
+    requestAiHint,
     selectTile,
     confirmDiscard,
     doAction,

@@ -144,6 +144,21 @@
           </div>
         </div>
         <footer class="panel-foot" v-if="showActionFooter">
+          <div v-if="canAccessAiHint" class="ai-hint-bar">
+            <button
+              class="ai-hint-button"
+              :disabled="aiHintPending || !connected"
+              @click="requestAiHint"
+            >
+              {{ aiHintPending ? 'AI提示分析中…' : aiHint ? '刷新AI提示' : '获取AI提示' }}
+            </button>
+            <span v-if="aiHintPending" class="ai-hint-status">AI正在分析当前局面…</span>
+            <span v-else-if="aiHintError" class="ai-hint-status ai-hint-status--error">{{ aiHintError }}</span>
+            <div v-else-if="aiHint" class="ai-hint-result">
+              <span class="ai-hint-action">{{ aiHintActionText }}</span>
+              <p v-if="aiHintReason" class="ai-hint-reason">{{ aiHintReason }}</p>
+            </div>
+          </div>
           <div class="actions">
             <div class="action-grid">
               <button
@@ -171,11 +186,12 @@
 </template>
 
 <script setup lang="ts">
-import { watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import GameLayout from '../components/GameLayout.vue'
 import FanSummary from '../components/FanSummary.vue'
 import { useGameStore } from '../stores/game'
+import type { Action } from '../stores/game'
 
 const router = useRouter()
 const store = useGameStore()
@@ -206,10 +222,39 @@ const {
   visibleActions,
   doAction,
   actText,
+  canAccessAiHint,
+  aiHint,
+  aiHintPhase,
+  aiHintPending,
+  aiHintError,
+  requestAiHint,
   gameInProgress,
   gameResult,
   liveFanSummary,
 } = store
+
+const aiHintAction = computed(() => {
+  const hint = aiHint.value
+  if (!hint) return null
+  const payload: Action = { type: hint.action }
+  if (typeof hint.tile === 'number') {
+    payload.tile = hint.tile
+  }
+  if (hint.style) {
+    payload.style = hint.style
+  } else if (hint.action === 'hu') {
+    payload.style = aiHintPhase.value === 'self_turn' ? 'self' : 'ron'
+  }
+  return payload
+})
+
+const aiHintActionText = computed(() => {
+  const action = aiHintAction.value
+  if (!action) return ''
+  return actText(action)
+})
+
+const aiHintReason = computed(() => aiHint.value?.reason ?? '')
 
 watch(
   gameInProgress,
@@ -291,6 +336,66 @@ function goJoin() {
   padding: 16px 22px 22px;
   background: rgba(16, 24, 47, 0.82);
   border-radius: 0 0 22px 22px;
+}
+
+.ai-hint-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.ai-hint-button {
+  align-self: flex-start;
+  background: linear-gradient(140deg, #2e4bff, #5f8bff);
+  border: none;
+  color: #f3f6ff;
+  font-weight: 600;
+  padding: 10px 18px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.ai-hint-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ai-hint-button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.ai-hint-status {
+  font-size: 0.92rem;
+  color: #93a4d8;
+}
+
+.ai-hint-status--error {
+  color: #ff9a9a;
+}
+
+.ai-hint-result {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(19, 30, 63, 0.65);
+  border: 1px solid rgba(102, 153, 255, 0.35);
+  border-radius: 14px;
+  padding: 10px 14px;
+}
+
+.ai-hint-action {
+  font-weight: 700;
+  color: #d5e2ff;
+  letter-spacing: 0.03em;
+}
+
+.ai-hint-reason {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: #aebcf5;
 }
 
 .panel-self .hand {

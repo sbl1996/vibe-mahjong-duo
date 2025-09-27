@@ -3,7 +3,7 @@
 # 胡牌：经典四面子一将（允许暗顺子）。实现 碰/杠/胡 的基本合法性检查。
 from __future__ import annotations
 from dataclasses import dataclass, replace
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any, NamedTuple
 import random
 from functools import lru_cache
 
@@ -13,7 +13,7 @@ COPIES_PER_TILE = 4
 TOTAL_TILES = TILE_TYPES * COPIES_PER_TILE  # 108
 
 def tile_to_str(t: int) -> str:
-    suit = ["m","s","p"][t // 9]
+    suit = ["万","条","筒"][t // 9]
     rank = t % 9 + 1
     return f"{rank}{suit}"
 
@@ -294,19 +294,129 @@ def get_yakuman_description(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> s
     return "役满"
 
 
+class DecompMeld(NamedTuple):
+    kind: str         # "triplet" | "sequence"
+    tiles: Tuple[int, ...]
+    concealed: bool   # True=手内形成；False=副露/明刻
+
+def _counts_list(tiles: Tuple[int, ...]) -> List[int]:
+    c = [0]*TILE_TYPES
+    for t in tiles: c[t]+=1
+    return c
+
+def _decompose_tiles_one_solution(tiles: Tuple[int, ...]) -> Optional[List[Tuple[str, Tuple[int, ...]]]]:
+    """
+    在纯 tiles 内寻找一组 (kind, tiles) 的面子分解 + 一对将（不显式返回将），
+    成功返回 4 个面子的列表；失败返回 None。
+    """
+    counts = _counts_list(tiles)
+
+    # 递归：需要 4 个面子 + 1 对将
+    def dfs(counts: List[int], melds_left: int, has_pair: bool) -> Optional[List[Tuple[str, Tuple[int,...]]]]:
+        if melds_left == 0:
+            # 剩余牌必须全部属于“将”或空；如果已经有将，则必须没有剩余牌
+            if has_pair and sum(counts) == 0:
+                return []
+            return None
+
+        # 找第一张
+        try:
+            i = next(k for k, c in enumerate(counts) if c > 0)
+        except StopIteration:
+            return None
+
+        # 1) 刻子
+        if counts[i] >= 3:
+            counts[i] -= 3
+            rest = dfs(counts, melds_left - 1, has_pair)
+            counts[i] += 3
+            if rest is not None:
+                return [("triplet", (i, i, i))] + rest
+
+        # 2) 顺子（不跨花色）
+        suit = i // 9
+        r = i % 9
+        if r <= 6 and counts[i] and counts[i+1] and counts[i+2] and ((i+2)//9)==suit:
+            counts[i]-=1; counts[i+1]-=1; counts[i+2]-=1
+            rest = dfs(counts, melds_left - 1, has_pair)
+            counts[i]+=1; counts[i+1]+=1; counts[i+2]+=1
+            if rest is not None:
+                return [("sequence", (i, i+1, i+2))] + rest
+
+        # 3) 将（只在还没有将时尝试）
+        if not has_pair and counts[i] >= 2:
+            counts[i] -= 2
+            rest = dfs(counts, melds_left, True)
+            counts[i] += 2
+            if rest is not None:
+                return rest
+
+        return None
+
+    # tiles 总体必须可胡（四面子一将）
+    # 我们只负责分解 4 个面子；将由 dfs 的 has_pair=true 保障
+    result = dfs(counts, 4, False)
+    return result
+
+def _melds_from_exposed(melds: Tuple[Meld, ...]) -> List[DecompMeld]:
+    out: List[DecompMeld] = []
+    for m in melds:
+        if m.kind in ("pong", "kong_exposed", "kong_added", "kong_concealed"):
+            # 统一当作“刻子”用于对对胡/暗刻计数；暗杠视作 concealed
+            concealed = (m.kind == "kong_concealed")
+            out.append(DecompMeld("triplet", m.tiles[:3], concealed))
+        else:
+            # 理论上不会出现顺子的副露（你的规则没有“吃”顺子），这里保守忽略
+            pass
+    return out
+
+
+def decompose_final(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> Optional[List[DecompMeld]]:
+    """
+    若当前 hand+melds 能胡，则返回一个包含 4 个面子的分解（带 concealed 标记）。
+    - 来自 hand 的面子：concealed=True
+    - 来自已副露/杠的面子：concealed = (m.kind == "kong_concealed")
+    """
+    # 先验证是否可胡
+    if not can_hu_four_plus_one(hand, melds):
+        return None
+
+    # 已有副露面子
+    exposed = _melds_from_exposed(melds)
+    need_from_hand = 4 - len(exposed)
+    if need_from_hand < 0:
+        return None
+
+    # 从手牌 tiles 分解出 need_from_hand 个面子
+    # 因为 hand 里包含将眼，分解函数会把“将”留在 counts 里处理（通过 has_pair 逻辑）
+    sol = _decompose_tiles_one_solution(hand)
+    if sol is None:
+        return None
+
+    # 只取前 need_from_hand 个来自手牌的面子（sol 恰为 4 个面子）
+    from_hand: List[DecompMeld] = []
+    taken = 0
+    for kind, tiles in sol:
+        if taken >= need_from_hand:
+            break
+        from_hand.append(DecompMeld(kind, tiles, True))
+        taken += 1
+
+    if len(exposed) + len(from_hand) != 4:
+        # 极小概率出现“面子分配不吻合”的情况（例如副露数与分解不一致）
+        # 退化：若副露数==4，直接返回副露；否则返回 None
+        if len(exposed) == 4:
+            return exposed
+        return None
+
+    return exposed + from_hand
+
+
 def is_four_concealed_triplets(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
-    """检查是否四暗刻"""
-    # 需要手牌中有四个暗刻（包括暗杠）
-    if len(melds) != 4:
+    d = decompose_final(hand, melds)
+    if not d:
         return False
-
-    for meld in melds:
-        if meld.kind == "kong_exposed":
-            return False  # 有明杠不算暗刻
-        if meld.kind not in ["pong", "kong_concealed"]:
-            return False
-
-    return True
+    return sum(1 for m in d if m.kind == "triplet" and m.concealed) == 4
 
 
 def is_four_kongs(melds: Tuple[Meld, ...]) -> bool:
@@ -331,32 +441,45 @@ def is_all_terminals(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
 
     return True
 
+def is_tanyao(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
+    """断幺九（全2-8）"""
+    all_tiles = list(hand)
+    for m in melds:
+        all_tiles.extend(m.tiles)
+    if not all_tiles:
+        return False
+    for t in all_tiles:
+        r = t % 9 + 1
+        if r == 1 or r == 9:
+            return False
+    return True  # 全部是2-8
 
 def is_menzen(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
-    """检查是否门前清（没有碰、明杠）"""
+    """检查是否门前清（没有碰、明杠；暗杠不破门清）"""
     for meld in melds:
-        if meld.kind in ["pong", "kong_exposed"]:
+        if meld.kind in ["pong", "kong_exposed", "kong_added"]:
             return False
     return True
 
 
 def is_all_triplets(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
-    """检查是否对对胡（四个刻子+将眼）"""
-    if len(melds) != 4:
+    d = decompose_final(hand, melds)
+    if not d or len(d) != 4:
         return False
+    return all(m.kind == "triplet" for m in d)
 
-    # 所有melds必须是刻子或杠子
-    triplet_kinds = ["pong", "kong_exposed", "kong_concealed", "kong_added"]
-    return all(meld.kind in triplet_kinds for meld in melds)
-
+def is_all_sequences(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
+    """四面子全为顺子（用于平和判定）"""
+    d = decompose_final(hand, melds)
+    if not d or len(d) != 4:
+        return False
+    return all(m.kind == "sequence" for m in d)
 
 def count_concealed_triplets(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> int:
-    """计算暗刻数量"""
-    count = 0
-    for meld in melds:
-        if meld.kind in ["pong", "kong_concealed"]:
-            count += 1
-    return count
+    d = decompose_final(hand, melds)
+    if not d:
+        return 0
+    return sum(1 for m in d if m.kind == "triplet" and m.concealed)
 
 
 def is_full_flush(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
@@ -403,6 +526,8 @@ def compute_score_summary(
         1: {"fan_total": 0, "fan_breakdown": []},
     }
 
+    yakuman_fan = 0  # 需要在后面给负番用
+
     if winner is not None:
         win_player = state.players[winner]
 
@@ -423,27 +548,47 @@ def compute_score_summary(
             if is_menzen(win_player.hand, win_player.melds):
                 _add_fan(player_scores[winner], "门前清", 1, "没有碰、明杠")
 
-            # 牌型番
-            if is_all_triplets(win_player.hand, win_player.melds):
+            # 牌型番 —— 对对胡 + 三暗刻的叠加规则 (UPDATED)
+            toitoi = is_all_triplets(win_player.hand, win_player.melds)
+            if toitoi:
                 _add_fan(player_scores[winner], "对对胡", 2, "四个刻子+将眼")
 
             concealed_triplets = count_concealed_triplets(win_player.hand, win_player.melds)
             if concealed_triplets >= 3:
-                _add_fan(player_scores[winner], "三暗刻", 2, f"三个暗刻")
+                if toitoi:
+                    _add_fan(player_scores[winner], "三暗刻（与对对胡叠加）", 1, "三暗刻作为额外+1")  # UPDATED
+                else:
+                    _add_fan(player_scores[winner], "三暗刻", 2, "三个暗刻")
 
             if is_full_flush(win_player.hand, win_player.melds):
-                _add_fan(player_scores[winner], "清一色", 5, "同花色牌型")
+                _add_fan(player_scores[winner], "清一色", 4, "同花色牌型")  # UPDATED
 
-            # 杠的番数（非役满时计算）
+            # 断幺九 +1
+            if is_tanyao(win_player.hand, win_player.melds):
+                _add_fan(player_scores[winner], "断幺九", 1, "全2-8")
+
+            # 平和 +1（定义：门前清且四面子全顺子）
+            if is_menzen(win_player.hand, win_player.melds) and is_all_sequences(win_player.hand, win_player.melds):
+                _add_fan(player_scores[winner], "平和", 1, "门清四顺子")
+
+            # 杠的番数（非役满时计算），每手上限 +2
             kong_count = count_kongs(win_player.melds)
             if kong_count > 0:
-                _add_fan(player_scores[winner], "杠", kong_count, f"{kong_count}个杠")
+                kong_fan = min(kong_count, 2)  # 每手杠番上限 +2
+                _add_fan(player_scores[winner], "杠", kong_fan, f"{kong_count}个杠（计入{kong_fan}番）")
+
+            # 普通手封顶 7 番 (UPDATED)
+            if player_scores[winner]["fan_total"] > 7:
+                # 直接封顶为 7，不额外添加负项，保持 breakdown 简洁
+                player_scores[winner]["fan_total"] = 7
+                player_scores[winner]["fan_breakdown"].append(
+                    {"name": "封顶", "fan": 0, "detail": "普通手封顶 7 番"}
+                )
 
         # 计算负番
         loser = 1 - winner
         if yakuman_fan > 0:
-            # 役满时负番固定为8番
-            _add_fan(player_scores[loser], "役满负番", -yakuman_fan, "对手役满")
+            _add_fan(player_scores[loser], "役满负番", -8, "对手役满")
         else:
             win_fan = player_scores[winner]["fan_total"]
             _add_fan(player_scores[loser], "负番", -win_fan, "对手胡牌")
