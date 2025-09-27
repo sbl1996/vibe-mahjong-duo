@@ -4,7 +4,7 @@
       <header class="rules-hero">
         <h2>番数规则总览</h2>
         <p>
-          下列番种依据后台 <code>compute_score_summary</code> 逻辑整理，区分基础番、牌型番、杠番及役满。
+          番数包括基础番、牌型番、杠番及役满。
           玩家胡牌时按条件叠加番数（普通手封顶 7 番），失败方承担等额负番。
         </p>
       </header>
@@ -67,13 +67,6 @@
           </div>
         </div>
       </section>
-
-      <section class="notes-card">
-        <h3>额外说明</h3>
-        <ul class="notes-list">
-          <li v-for="note in notes" :key="note">{{ note }}</li>
-        </ul>
-      </section>
     </section>
   </GameLayout>
 </template>
@@ -84,36 +77,24 @@ import GameLayout from '../components/GameLayout.vue'
 
 const ruleSections = [
   {
-    title: '基础番',
-    description: '所有胡牌自动获得的番数。',
+    title: '基础 / 行为 / 杠番',
+    description: '胡牌基础番、自摸／门前等行为番以及明暗杠带来的番数奖励。',
     items: [
       { name: '和底', fan: '+1', detail: '胡牌必得的基础番。' },
-    ],
-  },
-  {
-    title: '行为番',
-    description: '与胡牌方式或手牌状态相关。',
-    items: [
       { name: '自摸', fan: '+1', detail: '自摸胡牌时额外加番。' },
       { name: '门前清', fan: '+1', detail: '整局未碰、未明杠保持门清。' },
+      { name: '杠', fan: '+1 / 每杠', detail: '明杠、暗杠、加杠均计入；当局合计最多 +2 番。' },
     ],
   },
   {
     title: '牌型番',
-    description: '由手牌结构决定的番数，可以与行为番叠加。',
+    description: '由手牌结构决定的番数，可以与非牌型叠加。',
     items: [
       { name: '断幺九', fan: '+1', detail: '全部牌为 2-8，去除幺九。' },
       { name: '对对胡', fan: '+2', detail: '四个刻子 + 将眼。' },
       { name: '三暗刻', fan: '+2 / +1', detail: '拥有三副暗刻；若已满足对对胡，则在 +2 基础上再额外 +1。' },
       { name: '清一色', fan: '+2', detail: '所有牌属于同一花色（万 / 条 / 筒）。' },
       { name: '平和', fan: '+2', detail: '门前清且四组面子均为顺子。' },
-    ],
-  },
-  {
-    title: '杠番',
-    description: '杠子根据数量累加，但单局最多记 +2 番。',
-    items: [
-      { name: '杠', fan: '+1 / 每杠（封顶 +2）', detail: '明杠、暗杠、加杠均计入；当局合计最多 +2 番。' },
     ],
   },
 ]
@@ -141,13 +122,6 @@ const scoringTable = computed(() => {
   }
   return [...regularFans, yakuman]
 })
-
-const notes = [
-  '普通番种叠加后若超过 7 番，将直接封顶为 7 番，并在结算详情中标记“封顶”。',
-  '若未达成役满，失败方会记录与胜者相同数值的负番（例如胜者 5 番，失败方显示 -5 番）。',
-  '积分变化在结算面板中以正负号展示：胜者加分、失败者扣分。',
-  '番数及积分明细可在对局结束后通过“积分结算”模块回顾。',
-]
 </script>
 
 <style scoped>
