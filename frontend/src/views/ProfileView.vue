@@ -6,7 +6,24 @@
           <div class="hero-top">
             <div class="hero-meta">
               <span class="identity-chip">玩家档案</span>
-              <h1 class="username">{{ displayUsername || '未知玩家' }}</h1>
+              <div class="username-vip-row">
+                <h1 class="username">{{ displayUsername || '未知玩家' }}</h1>
+                <div class="vip-status" :class="[vipBadge.tierClass, hasActiveVip ? 'vip-status-active' : '']">
+                  <span class="vip-status-glow" aria-hidden="true"></span>
+                  <span class="vip-status-shine" aria-hidden="true"></span>
+                  <svg class="vip-icon" viewBox="0 0 32 20" aria-hidden="true">
+                    <path
+                      d="M4 18h24l2-10-6 4-4-9-4 9-6-4z"
+                      fill="currentColor"
+                      fill-rule="evenodd"
+                    />
+                  </svg>
+                  <div class="vip-text">
+                    <span class="vip-title">{{ vipBadge.title }}</span>
+                    <span class="vip-subtitle">{{ vipBadge.subtitle }}</span>
+                  </div>
+                </div>
+              </div>
               <p class="hero-subtitle">专属积分与战绩总览</p>
             </div>
             <div class="score-display">
@@ -96,7 +113,7 @@ import { useGameStore } from '../stores/game'
 import { formatDisplayNameOrFallback } from '../utils/displayName'
 
 const store = useGameStore()
-const { user, setUser, displayUsername } = store
+const { user, setUser, displayUsername, vipLevel } = store
 
 const stats = ref({
   total_games: 0,
@@ -138,6 +155,47 @@ const statHighlights = computed(() => [
   { label: '平局', value: stats.value.draws ?? 0 },
   { label: '胜率', value: winRateText.value }
 ])
+
+const vipBadge = computed(() => {
+  const levelRaw = Number(vipLevel.value ?? user.value?.vip_level ?? 0)
+  const level = Number.isFinite(levelRaw) && levelRaw > 0 ? levelRaw : 0
+
+  if (level === 0) {
+    return {
+      level,
+      title: 'VIP Lv.0',
+      subtitle: '贿赂管理员解锁',
+      tierClass: 'vip-tier-zero',
+    }
+  }
+
+  if (level <= 3) {
+    return {
+      level,
+      title: `尊贵 VIP Lv.${level}`,
+      subtitle: '星辉初绽',
+      tierClass: 'vip-tier-ember',
+    }
+  }
+
+  if (level <= 6) {
+    return {
+      level,
+      title: `尊贵 VIP Lv.${level}`,
+      subtitle: '流光加身',
+      tierClass: 'vip-tier-lumina',
+    }
+  }
+
+  return {
+    level,
+    title: `尊贵 VIP Lv.${level}`,
+    subtitle: '王者礼赞',
+    tierClass: 'vip-tier-aurora',
+  }
+})
+
+const hasActiveVip = computed(() => vipBadge.value.level > 0)
 
 const loadUserData = async () => {
   if (!user.value) return
@@ -395,8 +453,15 @@ onMounted(() => {
   text-transform: uppercase;
 }
 
-.username {
+
+.username-vip-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
   margin: 6px 0 12px;
+}
+
+.username {
   font-size: clamp(1.9rem, 2vw + 1.2rem, 2.8rem);
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -404,6 +469,149 @@ onMounted(() => {
   text-shadow:
     0 0 24px rgba(91, 129, 255, 0.6),
     0 4px 12px rgba(0, 0, 0, 0.35);
+  margin: 0;
+}
+
+.vip-status {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 22px;
+  border-radius: 999px;
+  border: 1px solid var(--vip-border, rgba(255, 210, 130, 0.6));
+  background: linear-gradient(
+    140deg,
+    var(--vip-bg-start, rgba(255, 215, 140, 0.35)),
+    var(--vip-bg-end, rgba(255, 173, 80, 0.4))
+  );
+  color: var(--vip-color, #fff4ce);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    0 14px 30px rgba(255, 188, 78, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  overflow: hidden;
+  isolation: isolate;
+  min-width: 220px;
+}
+
+.vip-status-active {
+  transform: translateZ(0);
+  box-shadow:
+    0 18px 40px rgba(255, 196, 110, 0.38),
+    0 0 18px rgba(255, 229, 173, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.vip-status-glow {
+  position: absolute;
+  inset: -160% -40% -40%;
+  background: radial-gradient(circle, var(--vip-glow, rgba(255, 214, 153, 0.6)) 0%, transparent 70%);
+  filter: blur(28px);
+  opacity: 0.75;
+  pointer-events: none;
+  z-index: -2;
+}
+
+.vip-status-shine {
+  position: absolute;
+  top: -20%;
+  left: -150%;
+  width: 65%;
+  height: 140%;
+  background: linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.65) 45%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  transform: skewX(-25deg);
+  animation: vipShine 5s ease-in-out infinite;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.vip-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 1;
+}
+
+.vip-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.vip-subtitle {
+  font-size: 0.75rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--vip-secondary, rgba(255, 248, 223, 0.85));
+}
+
+.vip-icon {
+  width: 28px;
+  height: 18px;
+  flex: none;
+  color: var(--vip-accent, #ffe0a0);
+  filter: drop-shadow(0 0 10px rgba(255, 210, 130, 0.55));
+  z-index: 1;
+}
+
+.vip-tier-zero {
+  --vip-border: rgba(120, 144, 205, 0.55);
+  --vip-bg-start: rgba(92, 109, 183, 0.28);
+  --vip-bg-end: rgba(64, 78, 152, 0.3);
+  --vip-glow: rgba(115, 138, 204, 0.45);
+  --vip-color: #d5ddff;
+  --vip-secondary: rgba(216, 224, 255, 0.78);
+  --vip-accent: #d1dbff;
+}
+
+.vip-tier-ember {
+  --vip-border: rgba(255, 196, 128, 0.75);
+  --vip-bg-start: rgba(255, 197, 120, 0.42);
+  --vip-bg-end: rgba(255, 164, 94, 0.48);
+  --vip-glow: rgba(255, 198, 123, 0.6);
+  --vip-color: #fff2c9;
+  --vip-secondary: rgba(255, 248, 221, 0.85);
+  --vip-accent: #ffd89a;
+}
+
+.vip-tier-lumina {
+  --vip-border: rgba(255, 215, 164, 0.85);
+  --vip-bg-start: rgba(255, 221, 154, 0.45);
+  --vip-bg-end: rgba(255, 180, 105, 0.55);
+  --vip-glow: rgba(255, 201, 141, 0.7);
+  --vip-color: #fff3c6;
+  --vip-secondary: rgba(255, 248, 218, 0.92);
+  --vip-accent: #ffe0a6;
+}
+
+.vip-tier-aurora {
+  --vip-border: rgba(255, 229, 189, 0.9);
+  --vip-bg-start: rgba(255, 236, 189, 0.52);
+  --vip-bg-end: rgba(255, 198, 131, 0.62);
+  --vip-glow: rgba(255, 215, 150, 0.78);
+  --vip-color: #fff8d6;
+  --vip-secondary: rgba(255, 252, 233, 0.95);
+  --vip-accent: #ffe9bc;
+}
+
+@keyframes vipShine {
+  0%,
+  55% {
+    transform: translateX(-160%) skewX(-25deg);
+  }
+  75% {
+    transform: translateX(140%) skewX(-25deg);
+  }
+  100% {
+    transform: translateX(140%) skewX(-25deg);
+  }
 }
 
 .score-label {
