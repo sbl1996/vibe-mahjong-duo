@@ -23,7 +23,7 @@
           @click="playWithAi"
           :disabled="practiceButtonDisabled"
         >
-          AI陪练（不计分）
+          AI练习
         </button>
       </div>
     </section>
@@ -118,6 +118,25 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* 当有两个按钮时，横向排列 */
+.action-group:has(> button + button) {
+  flex-direction: row;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.action-group > button {
+  width: 100%;
+  max-width: none;
+}
+
+/* 两个按钮时左右分布 */
+.action-group:has(> button + button) > button {
+  flex: 1 1 0;
+  max-width: 48%;
+  width: auto;
 }
 
 .user-info {
