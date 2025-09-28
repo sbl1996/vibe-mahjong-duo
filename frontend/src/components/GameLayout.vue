@@ -393,7 +393,8 @@ button:not(:disabled):hover {
   }
 
   .title-block h1 {
-    font-size: 2rem;
+    font-size: 1.25rem;
+    letter-spacing: 0.08em;
   }
 
   .status-line {

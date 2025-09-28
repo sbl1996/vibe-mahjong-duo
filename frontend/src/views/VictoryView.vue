@@ -178,9 +178,14 @@ const reasonDescription = computed(() => {
   const result = gameResult.value
   if (!result) return '等待新对局'
   if (result.reason === 'zimo') return '自摸胡牌'
+  if (result.reason === 'zimo_kong') return '杠上开花'
   if (result.reason === 'ron') {
     const tileText = typeof result.tile === 'number' ? t2s(result.tile) : '未知牌'
     return `荣和 ${tileText}`
+  }
+  if (result.reason === 'rob_kong') {
+    const tileText = typeof result.tile === 'number' ? t2s(result.tile) : '未知牌'
+    return `抢杠 ${tileText}`
   }
   if (result.reason === 'wall') return '牌墙摸尽（流局）'
   if (result.reason === 'abort') {

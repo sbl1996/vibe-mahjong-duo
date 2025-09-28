@@ -46,6 +46,9 @@ class GameState:
     step_no: int = 0
     started: bool = False
     ended: bool = False
+    pending_kong_draw: Optional[int] = None          # 谁需要补杠牌
+    last_draw_info: Optional[Tuple[int, str]] = None # (seat, draw_type)
+    pending_rob_kong: Optional[Tuple[int, int]] = None  # (kong_owner, tile)
 
 def sort_hand(arr: List[int]) -> List[int]:
     return sorted(arr)
@@ -148,10 +151,22 @@ def draw(state: GameState, seat: int) -> Tuple[GameState, Optional[int]]:
         return state, None
     tile = state.wall[0]
     new_wall = state.wall[1:]
+    draw_type = "kong" if state.pending_kong_draw == seat else "normal"
+    pending_kong_draw = state.pending_kong_draw
+    if pending_kong_draw == seat:
+        pending_kong_draw = None
     ps = list(state.players)
     phand = list(ps[seat].hand); phand.append(tile); phand = sort_hand(phand)
     ps[seat] = replace(ps[seat], hand=tuple(phand))
-    st = replace(state, wall=new_wall, players=tuple(ps), last_discard=None, step_no=state.step_no+1)
+    st = replace(
+        state,
+        wall=new_wall,
+        players=tuple(ps),
+        last_discard=None,
+        step_no=state.step_no+1,
+        pending_kong_draw=pending_kong_draw,
+        last_draw_info=(seat, draw_type),
+    )
     return st, tile
 
 def discard(state: GameState, seat: int, tile: int) -> GameState:
@@ -162,7 +177,14 @@ def discard(state: GameState, seat: int, tile: int) -> GameState:
     hand.remove(tile)
     disc = list(ps[seat].discards); disc.append(tile)
     ps[seat] = replace(ps[seat], hand=tuple(hand), discards=tuple(disc))
-    st = replace(state, players=tuple(ps), last_discard=(seat, tile), step_no=state.step_no+1, turn=1-seat)
+    st = replace(
+        state,
+        players=tuple(ps),
+        last_discard=(seat, tile),
+        step_no=state.step_no+1,
+        turn=1-seat,
+        last_draw_info=None,
+    )
     return st
 
 def claim_peng(state: GameState, claimer: int, from_seat: int, tile: int) -> GameState:
@@ -179,7 +201,14 @@ def claim_peng(state: GameState, claimer: int, from_seat: int, tile: int) -> Gam
     if opp_disc and opp_disc[-1] == tile:
         opp_disc.pop()
         ps[from_seat] = replace(ps[from_seat], discards=tuple(opp_disc))
-    st = replace(state, players=tuple(ps), last_discard=None, turn=claimer, step_no=state.step_no+1)
+    st = replace(
+        state,
+        players=tuple(ps),
+        last_discard=None,
+        turn=claimer,
+        step_no=state.step_no+1,
+        last_draw_info=None,
+    )
     return st
 
 def claim_kong_exposed(state: GameState, claimer: int, from_seat: int, tile: int) -> GameState:
@@ -194,7 +223,15 @@ def claim_kong_exposed(state: GameState, claimer: int, from_seat: int, tile: int
     if opp_disc and opp_disc[-1] == tile:
         opp_disc.pop()
         ps[from_seat] = replace(ps[from_seat], discards=tuple(opp_disc))
-    st = replace(state, players=tuple(ps), last_discard=None, turn=claimer, step_no=state.step_no+1)
+    st = replace(
+        state,
+        players=tuple(ps),
+        last_discard=None,
+        turn=claimer,
+        step_no=state.step_no+1,
+        pending_kong_draw=claimer,
+        last_draw_info=None,
+    )
     return st
 
 def kong_concealed(state: GameState, seat: int, tile: int) -> GameState:
@@ -205,7 +242,13 @@ def kong_concealed(state: GameState, seat: int, tile: int) -> GameState:
     melds.append(Meld("kong_concealed", (tile, tile, tile, tile)))
     ps = list(state.players)
     ps[seat] = replace(ps[seat], hand=tuple(sort_hand(hand)), melds=tuple(melds))
-    st = replace(state, players=tuple(ps), step_no=state.step_no+1)
+    st = replace(
+        state,
+        players=tuple(ps),
+        step_no=state.step_no+1,
+        pending_kong_draw=seat,
+        last_draw_info=None,
+    )
     return st
 
 def kong_added(state: GameState, seat: int, tile: int) -> GameState:
@@ -224,11 +267,26 @@ def kong_added(state: GameState, seat: int, tile: int) -> GameState:
     if not upgraded: raise ValueError("NO_PONG_TO_UPGRADE")
     hand.remove(tile)
     ps[seat] = replace(ps[seat], hand=tuple(sort_hand(hand)), melds=tuple(new_melds))
-    return replace(state, players=tuple(ps), step_no=state.step_no+1)
+    return replace(
+        state,
+        players=tuple(ps),
+        step_no=state.step_no+1,
+        pending_kong_draw=seat,
+        last_draw_info=None,
+    )
 
 def legal_choices(state: GameState, seat: int) -> List[Dict]:
     me = state.players[seat]
     choices = []
+    if state.pending_rob_kong is not None:
+        kong_owner, tile = state.pending_rob_kong
+        robber = 1 - kong_owner
+        if seat == robber:
+            merged = tuple(sorted(me.hand + (tile,)))
+            if can_hu_four_plus_one(merged, me.melds):
+                choices.append({"type": "hu", "style": "rob", "tile": tile, "from": kong_owner})
+            choices.append({"type": "pass"})
+        return choices
     # 若刚摸到14张，检查自摸胡、暗杠/加杠、打出
     if state.last_discard is None and len(me.hand) % 3 == 2 and seat == state.turn:
         if can_hu_four_plus_one(me.hand, me.melds):
@@ -542,8 +600,10 @@ def compute_score_summary(
             _add_fan(player_scores[winner], "和底", 1, "胡牌基础番")
 
             # 行为与状态番
-            if reason == "zimo":
+            if reason in ("zimo", "zimo_kong"):
                 _add_fan(player_scores[winner], "自摸", 1, "自摸胡牌")
+            if reason == "zimo_kong":
+                _add_fan(player_scores[winner], "杠上开花", 1, "杠后补牌自摸")
 
             if is_menzen(win_player.hand, win_player.melds):
                 _add_fan(player_scores[winner], "门前清", 1, "没有碰、明杠")
@@ -570,6 +630,9 @@ def compute_score_summary(
             # 平和 +2（定义：门前清且四面子全顺子）
             if is_menzen(win_player.hand, win_player.melds) and is_all_sequences(win_player.hand, win_player.melds):
                 _add_fan(player_scores[winner], "平和", 2, "门清四顺子")
+
+            if reason == "rob_kong":
+                _add_fan(player_scores[winner], "抢杠", 1, "抢杠胡")
 
             # 杠的番数（非役满时计算），每手上限 +2
             kong_count = count_kongs(win_player.melds)

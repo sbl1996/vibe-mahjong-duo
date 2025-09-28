@@ -424,19 +424,22 @@ function goJoin() {
 }
 
 .hand {
+  --hand-tile-gap: 8px;
+  --hand-scroll-padding: 8px;
+  --hand-tile-size: clamp(18px, calc((100% - var(--hand-tile-gap) * 13) / 14), 54px);
   display: flex;
   flex-wrap: nowrap;
-  gap: 8px;
+  gap: var(--hand-tile-gap);
   width: 100%;
-  padding-right: 8px;
+  padding-right: var(--hand-scroll-padding);
   overflow-x: auto;
   overscroll-behavior-x: contain;
 }
 
 .hand-opponent {
   justify-content: flex-start;
-  gap: 8px;
-  padding-right: 8px;
+  gap: var(--hand-tile-gap);
+  padding-right: var(--hand-scroll-padding);
   overflow-x: auto;
   overscroll-behavior-x: contain;
 }
@@ -469,6 +472,14 @@ function goJoin() {
   justify-content: center;
   padding: 4px;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.hand .tile,
+.hand-opponent .tile {
+  width: var(--hand-tile-size, 54px);
+  height: calc(var(--hand-tile-size, 54px) * 1.48);
+  border-radius: clamp(6px, calc(var(--hand-tile-size, 54px) * 0.22), 12px);
+  padding: clamp(2px, calc(var(--hand-tile-size, 54px) * 0.08), 4px);
 }
 
 .tile button {
@@ -585,6 +596,13 @@ function goJoin() {
 
   .action-grid button {
     width: 100%;
+  }
+}
+
+@media (max-width: 600px) {
+  .hand {
+    --hand-tile-gap: 4px;
+    --hand-scroll-padding: 4px;
   }
 }
 </style>

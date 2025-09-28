@@ -88,7 +88,7 @@ const connected = ref(false)
 const autoReadyRequested = ref(false)
 const aiPracticePending = ref(false)
 const vipLevel = computed(() => user.value?.vip_level ?? 0)
-const canAccessAiPractice = computed(() => vipLevel.value >= 1)
+const canAccessAiPractice = computed(() => true)
 const canAccessAiHint = computed(() => vipLevel.value >= 1)
 
 const seat = ref<number | null>(null)
@@ -402,7 +402,11 @@ function actText(a: Action) {
   if (a.type === 'draw') return '摸牌'
   if (a.type === 'peng' || a.type === 'pong') return `碰 ${t2s(a.tile ?? -1)}`
   if (a.type === 'kong') return `${kongStyleText(a.style)} ${t2s(a.tile ?? -1)}`
-  if (a.type === 'hu') return a.style === 'self' ? '自摸胡' : `荣和 ${t2s(a.tile ?? -1)}`
+  if (a.type === 'hu') {
+    if (a.style === 'self') return '自摸胡'
+    if (a.style === 'rob') return `抢杠胡 ${t2s(a.tile ?? -1)}`
+    return `荣和 ${t2s(a.tile ?? -1)}`
+  }
   if (a.type === 'pass') return '过'
   return JSON.stringify(a)
 }
@@ -645,6 +649,11 @@ function connect() {
         if (evv.seat !== seat.value) {
           const deduction = evv.style === 'added' ? 1 : evv.style === 'concealed' ? 4 : 3
           oppHandCount.value = Math.max(0, oppHandCount.value - deduction)
+        }
+      }
+      if (evv.type === 'rob_kong') {
+        if (typeof evv.from === 'number' && evv.from !== seat.value) {
+          oppHandCount.value = Math.max(0, oppHandCount.value - 1)
         }
       }
       if (evv.type === 'draw') {
