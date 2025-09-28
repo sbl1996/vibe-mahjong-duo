@@ -7,7 +7,7 @@
         </div>
         <nav class="navigation">
           <template v-if="user">
-            <router-link to="/join" class="nav-link" active-class="active">开一局</router-link>
+            <router-link to="/join" class="nav-link" active-class="active">麻将对战</router-link>
             <router-link to="/profile" class="nav-link" active-class="active">个人信息</router-link>
             <router-link to="/rules" class="nav-link" active-class="active">番数规则</router-link>
             <button
@@ -381,7 +381,7 @@ button:not(:disabled):hover {
   color: rgba(180, 196, 244, 0.62);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 832px) {
   .game-card {
     padding: 24px;
   }
