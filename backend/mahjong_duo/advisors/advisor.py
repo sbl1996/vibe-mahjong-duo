@@ -34,24 +34,25 @@ from dataclasses import replace
 from typing import List, Tuple, Optional, Dict, Any
 from functools import lru_cache
 
-from rules_core import (
+from mahjong_duo.rules_core import (
     TILE_TYPES, tile_to_str, GameState, Meld,
-    can_hu_four_plus_one,  compute_score_summary, count_kongs,
-    is_full_flush, is_menzen, is_all_triplets, count_concealed_triplets, check_yakuman
+    can_hu_four_plus_one, compute_score_summary, count_kongs,
+    is_full_flush, is_menzen, is_all_triplets, count_concealed_triplets,
+    check_yakuman, is_tanyao
 )
 
 # ------------------------------
 #       向听与有效张估计
 # ------------------------------
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=128)
 def _counts(tiles: Tuple[int, ...]) -> Tuple[int, ...]:
     c = [0]*TILE_TYPES
     for t in tiles:
         c[t]+=1
     return tuple(c)
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=128)
 def _min_adds_to_complete(counts: Tuple[int, ...], melds_done: int, has_pair: bool) -> int:
     """返回从当前（未包括明刻/杠）牌型到完成 4 面子 1 将所需最少“补牌张数”。
     这相当于一个标准的向听近似（返回值即“距离胡牌还差的张数”，胡=-1）。
@@ -236,20 +237,30 @@ def estimate_final_fan_upper(state: GameState, seat: int, hand: Tuple[int,...], 
     fan = 1  # 和底预期
     if is_menzen(hand, melds):
         fan += 1
+
     if is_full_flush(hand, melds):
-        fan += 4
+        fan += 2
+
     if is_all_triplets(hand, melds):
         fan += 2
+
     ctrip = count_concealed_triplets(hand, melds)
     if ctrip >= 3:
         fan += 2
-    kg = count_kongs(melds)
-    fan += kg  # 每杠 +1
-    # 役满检查（极少在未胡状态下达成，但做个兜底）
-    yk = check_yakuman(hand, melds, reason)
-    if yk:
-        fan = max(fan, yk)
-    return max(1, fan)
+
+    if is_tanyao(hand, melds):
+        fan += 1
+
+    # 杠的番数有上限
+    kong_count = count_kongs(melds)
+    fan += min(kong_count, 2)
+
+    # 役满检查
+    yakuman_fan = check_yakuman(hand, melds, reason)
+    if yakuman_fan:
+        return yakuman_fan
+
+    return min(fan, 7) # 普通番种上限为7
 
 
 # ------------------------------

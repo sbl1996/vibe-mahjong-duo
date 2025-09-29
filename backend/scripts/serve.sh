@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- 基础配置 ---
-APP_NAME="server:app"
+APP_NAME="mahjong_duo.app:app"
 BIND_HOST="0.0.0.0"
 DEFAULT_PORT="8080"
 WORKERS=1

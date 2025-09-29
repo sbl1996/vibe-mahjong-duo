@@ -1,15 +1,23 @@
 # -*- coding: utf-8 -*-
 import json, asyncio, random, secrets
 from pathlib import Path
+from dataclasses import replace
 from typing import Dict, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from rules_core import *
-from advisor import advise_on_draw, advise_on_opponent_discard
-from database import db, init_database
 
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+from mahjong_duo.rules_core import (
+    GameState, sort_hand, compute_score_summary, init_game, legal_choices,
+    resolve_rob_kong_pass, resolve_rob_kong_hu, draw, discard,
+    kong_concealed, prepare_added_kong, claim_peng, claim_kong_exposed,
+    can_peng, can_kong_exposed, can_hu_four_plus_one
+    
+)
+from mahjong_duo.advisors.advisor import advise_on_draw, advise_on_opponent_discard
+from mahjong_duo.database import db, init_database
+
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 INDEX_FILE = STATIC_DIR / "index.html"
 
 BASE_SCORE = 8  # 初始分为 1000 时，1 番起始变动约为 16 分
@@ -263,63 +271,40 @@ class Room:
         }
 
     async def _resolve_rob_kong_hu(self, robber: int, tile: int, *, lock_held: bool) -> None:
-        if not self.state or self.state.pending_rob_kong is None:
+        if not self.state:
             return
-        kong_owner, pending_tile = self.state.pending_rob_kong
-        if robber != 1 - kong_owner:
+        try:
+            result = resolve_rob_kong_hu(self.state, robber, tile)
+        except ValueError:
             return
-        win_tile = tile if tile is not None else pending_tile
-        st = self.state
-        players = list(st.players)
+        self.state = result.state
 
-        owner_player = players[kong_owner]
-        owner_hand = list(owner_player.hand)
-        if win_tile in owner_hand:
-            owner_hand.remove(win_tile)
-            players[kong_owner] = replace(owner_player, hand=tuple(owner_hand))
-
-        winner_player = players[robber]
-        winner_hand = list(winner_player.hand)
-        winner_hand.append(win_tile)
-        winner_hand = sort_hand(winner_hand)
-        players[robber] = replace(winner_player, hand=tuple(winner_hand))
-
-        self.state = replace(
-            st,
-            players=tuple(players),
-            pending_rob_kong=None,
-            ended=True,
-            turn=robber,
-            last_discard=None,
-            pending_kong_draw=None,
-            last_draw_info=None,
-        )
-
-        await self.broadcast({"type": "event", "ev": {"type": "rob_kong", "seat": robber, "from": kong_owner, "tile": win_tile}})
+        await self.broadcast({
+            "type": "event",
+            "ev": {"type": "rob_kong", "seat": robber, "from": result.kong_owner, "tile": result.tile},
+        })
 
         score_summary = compute_score_summary(self.state, robber, "rob_kong")
         await self.broadcast({
             "type": "game_end",
-            "result": {"winner": robber, "reason": "rob_kong", "tile": win_tile, "score": score_summary},
+            "result": {"winner": robber, "reason": "rob_kong", "tile": result.tile, "score": score_summary},
             "final_view": self._final_view_payload(),
         })
         await update_game_scores(self, robber, "rob_kong", score_summary)
 
     async def _resolve_rob_kong_pass(self, robber: int, *, lock_held: bool) -> None:
-        if not self.state or self.state.pending_rob_kong is None:
+        if not self.state:
             return
-        kong_owner, tile = self.state.pending_rob_kong
-        if robber != 1 - kong_owner:
-            return
-        base_state = replace(self.state, pending_rob_kong=None, turn=kong_owner)
         try:
-            new_state = kong_added(base_state, kong_owner, tile)
-        except Exception:
-            self.state = base_state
+            result = resolve_rob_kong_pass(self.state, robber)
+        except ValueError:
             return
-        self.state = new_state
+        self.state = result.state
         await self.broadcast({"type": "event", "ev": {"type": "pass", "seat": robber}})
-        await self.broadcast({"type": "event", "ev": {"type": "kong", "style": "added", "seat": kong_owner, "tile": tile}})
+        await self.broadcast({
+            "type": "event",
+            "ev": {"type": "kong", "style": "added", "seat": result.kong_owner, "tile": result.tile},
+        })
         await self.sync_all()
         await self.step_auto(lock_held=True)
 
@@ -501,29 +486,13 @@ class Room:
                         if style == "concealed":
                             self.state = kong_concealed(self.state, seat, tile)
                         elif style == "added":
-                            if tile not in self.state.players[seat].hand:
-                                raise ValueError("tile not in hand")
-                            has_pong = any(
-                                m.kind == "pong" and m.tiles and m.tiles[0] == tile
-                                for m in self.state.players[seat].melds
-                            )
-                            if not has_pong:
-                                raise ValueError("no pong to upgrade")
-                            robber = 1 - seat
-                            can_rob = can_hu_four_plus_one(
-                                tuple(sorted(self.state.players[robber].hand + (tile,))),
-                                self.state.players[robber].melds,
-                            )
-                            if can_rob:
-                                self.state = replace(
-                                    self.state,
-                                    pending_rob_kong=(seat, tile),
-                                    turn=robber,
-                                )
+                            result = prepare_added_kong(self.state, seat, tile)
+                            self.state = result.state
+                            if result.rob_pending:
                                 await self.sync_all()
                                 await self.step_auto(lock_held=True)
                                 return
-                            self.state = kong_added(self.state, seat, tile)
+                            style = "added"
                         else:
                             # 默认按明杠处理（一般不会出现）
                             self.state = kong_concealed(self.state, seat, tile)
@@ -820,31 +789,21 @@ async def auth_ws_endpoint(ws: WebSocket):
                             if style == "concealed":
                                 room.state = kong_concealed(st, sess.seat, tile)
                             elif style == "added":
-                                if tile not in st.players[sess.seat].hand:
-                                    await sess.send({"type": "error", "detail": "tile not in hand"})
+                                try:
+                                    result = prepare_added_kong(st, sess.seat, tile)
+                                except ValueError as exc:
+                                    detail = {
+                                        "ILLEGAL_KONG_ADDED": "tile not in hand",
+                                        "NO_PONG_TO_UPGRADE": "no pong to upgrade",
+                                    }.get(str(exc), "bad kong request")
+                                    await sess.send({"type": "error", "detail": detail})
                                     continue
-                                has_pong = any(
-                                    m.kind == "pong" and m.tiles and m.tiles[0] == tile
-                                    for m in st.players[sess.seat].melds
-                                )
-                                if not has_pong:
-                                    await sess.send({"type": "error", "detail": "no pong to upgrade"})
-                                    continue
-                                robber = 1 - sess.seat
-                                can_rob = can_hu_four_plus_one(
-                                    tuple(sorted(st.players[robber].hand + (tile,))),
-                                    st.players[robber].melds,
-                                )
-                                if can_rob:
-                                    room.state = replace(
-                                        st,
-                                        pending_rob_kong=(sess.seat, tile),
-                                        turn=robber,
-                                    )
+                                room.state = result.state
+                                if result.rob_pending:
                                     await room.sync_all()
                                     await room.step_auto(lock_held=True)
                                     continue
-                                room.state = kong_added(st, sess.seat, tile)
+                                style = "added"
                             else:
                                 await sess.send({"type":"error","detail":"bad kong style"}); continue
                             ev_payload = {"type":"kong","style":style,"seat":sess.seat}
@@ -1227,31 +1186,21 @@ async def ws_endpoint(ws: WebSocket):
                             if style == "concealed":
                                 room.state = kong_concealed(st, sess.seat, tile)
                             elif style == "added":
-                                if tile not in st.players[sess.seat].hand:
-                                    await sess.send({"type": "error", "detail": "tile not in hand"})
+                                try:
+                                    result = prepare_added_kong(st, sess.seat, tile)
+                                except ValueError as exc:
+                                    detail = {
+                                        "ILLEGAL_KONG_ADDED": "tile not in hand",
+                                        "NO_PONG_TO_UPGRADE": "no pong to upgrade",
+                                    }.get(str(exc), "bad kong request")
+                                    await sess.send({"type": "error", "detail": detail})
                                     continue
-                                has_pong = any(
-                                    m.kind == "pong" and m.tiles and m.tiles[0] == tile
-                                    for m in st.players[sess.seat].melds
-                                )
-                                if not has_pong:
-                                    await sess.send({"type": "error", "detail": "no pong to upgrade"})
-                                    continue
-                                robber = 1 - sess.seat
-                                can_rob = can_hu_four_plus_one(
-                                    tuple(sorted(st.players[robber].hand + (tile,))),
-                                    st.players[robber].melds,
-                                )
-                                if can_rob:
-                                    room.state = replace(
-                                        st,
-                                        pending_rob_kong=(sess.seat, tile),
-                                        turn=robber,
-                                    )
+                                room.state = result.state
+                                if result.rob_pending:
                                     await room.sync_all()
                                     await room.step_auto(lock_held=True)
                                     continue
-                                room.state = kong_added(st, sess.seat, tile)
+                                style = "added"
                             else:
                                 await sess.send({"type":"error","detail":"bad kong style"}); continue
                             ev_payload = {"type":"kong","style":style,"seat":sess.seat}

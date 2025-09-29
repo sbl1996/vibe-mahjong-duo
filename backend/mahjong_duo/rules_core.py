@@ -109,7 +109,7 @@ def _try_meld_sequence(counts: List[int], i: int) -> bool:
             return True
     return False
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=128)
 def _can_form_melds(counts: Tuple[int,...], need: int) -> bool:
     if need==0:
         return sum(counts)==0
@@ -275,6 +275,103 @@ def kong_added(state: GameState, seat: int, tile: int) -> GameState:
         last_draw_info=None,
     )
 
+
+class AddedKongResult(NamedTuple):
+    state: GameState
+    rob_pending: bool
+
+
+class RobKongHuResult(NamedTuple):
+    state: GameState
+    kong_owner: int
+    tile: int
+
+
+class RobKongPassResult(NamedTuple):
+    state: GameState
+    kong_owner: int
+    tile: int
+
+
+def prepare_added_kong(state: GameState, seat: int, tile: int) -> AddedKongResult:
+    """尝试执行加杠，若对手可抢杠则挂起抢杠状态并返回 rob_pending=True。"""
+    ps = state.players
+    hand = ps[seat].hand
+    if tile not in hand:
+        raise ValueError("ILLEGAL_KONG_ADDED")
+    has_pong = any(m.kind == "pong" and m.tiles and m.tiles[0] == tile for m in ps[seat].melds)
+    if not has_pong:
+        raise ValueError("NO_PONG_TO_UPGRADE")
+
+    robber = 1 - seat
+    opponent = ps[robber]
+    merged = tuple(sorted(opponent.hand + (tile,)))
+    if can_hu_four_plus_one(merged, opponent.melds):
+        st = replace(
+            state,
+            pending_rob_kong=(seat, tile),
+            turn=robber,
+        )
+        return AddedKongResult(st, True)
+
+    return AddedKongResult(kong_added(state, seat, tile), False)
+
+
+def resolve_rob_kong_hu(state: GameState, robber: int, tile: Optional[int] = None) -> RobKongHuResult:
+    """抢杠胡：返回新的状态、杠主座位和胡的牌。"""
+    if state.pending_rob_kong is None:
+        raise ValueError("NO_PENDING_ROB_KONG")
+    kong_owner, pending_tile = state.pending_rob_kong
+    if robber != 1 - kong_owner:
+        raise ValueError("NOT_ROBBER")
+    win_tile = tile if tile is not None else pending_tile
+
+    st = state
+    players = list(st.players)
+
+    owner_player = players[kong_owner]
+    owner_hand = list(owner_player.hand)
+    if win_tile in owner_hand:
+        owner_hand.remove(win_tile)
+        players[kong_owner] = replace(owner_player, hand=tuple(owner_hand))
+
+    winner_player = players[robber]
+    winner_hand = list(winner_player.hand)
+    winner_hand.append(win_tile)
+    winner_hand = sort_hand(winner_hand)
+    players[robber] = replace(winner_player, hand=tuple(winner_hand))
+
+    new_state = replace(
+        st,
+        players=tuple(players),
+        pending_rob_kong=None,
+        ended=True,
+        turn=robber,
+        last_discard=None,
+        pending_kong_draw=None,
+        last_draw_info=None,
+    )
+
+    return RobKongHuResult(new_state, kong_owner, win_tile)
+
+
+def resolve_rob_kong_pass(state: GameState, robber: int) -> RobKongPassResult:
+    """抢杠放弃后继续执行加杠，返回新状态与相关信息。"""
+    if state.pending_rob_kong is None:
+        raise ValueError("NO_PENDING_ROB_KONG")
+    kong_owner, tile = state.pending_rob_kong
+    if robber != 1 - kong_owner:
+        raise ValueError("NOT_ROBBER")
+
+    base_state = replace(state, pending_rob_kong=None, turn=kong_owner)
+    try:
+        new_state = kong_added(base_state, kong_owner, tile)
+    except Exception:
+        new_state = base_state
+
+    return RobKongPassResult(new_state, kong_owner, tile)
+
+
 def legal_choices(state: GameState, seat: int) -> List[Dict]:
     me = state.players[seat]
     choices = []
@@ -357,64 +454,6 @@ class DecompMeld(NamedTuple):
     tiles: Tuple[int, ...]
     concealed: bool   # True=手内形成；False=副露/明刻
 
-def _counts_list(tiles: Tuple[int, ...]) -> List[int]:
-    c = [0]*TILE_TYPES
-    for t in tiles: c[t]+=1
-    return c
-
-def _decompose_tiles_one_solution(tiles: Tuple[int, ...]) -> Optional[List[Tuple[str, Tuple[int, ...]]]]:
-    """
-    在纯 tiles 内寻找一组 (kind, tiles) 的面子分解 + 一对将（不显式返回将），
-    成功返回 4 个面子的列表；失败返回 None。
-    """
-    counts = _counts_list(tiles)
-
-    # 递归：需要 4 个面子 + 1 对将
-    def dfs(counts: List[int], melds_left: int, has_pair: bool) -> Optional[List[Tuple[str, Tuple[int,...]]]]:
-        if melds_left == 0:
-            # 剩余牌必须全部属于“将”或空；如果已经有将，则必须没有剩余牌
-            if has_pair and sum(counts) == 0:
-                return []
-            return None
-
-        # 找第一张
-        try:
-            i = next(k for k, c in enumerate(counts) if c > 0)
-        except StopIteration:
-            return None
-
-        # 1) 刻子
-        if counts[i] >= 3:
-            counts[i] -= 3
-            rest = dfs(counts, melds_left - 1, has_pair)
-            counts[i] += 3
-            if rest is not None:
-                return [("triplet", (i, i, i))] + rest
-
-        # 2) 顺子（不跨花色）
-        suit = i // 9
-        r = i % 9
-        if r <= 6 and counts[i] and counts[i+1] and counts[i+2] and ((i+2)//9)==suit:
-            counts[i]-=1; counts[i+1]-=1; counts[i+2]-=1
-            rest = dfs(counts, melds_left - 1, has_pair)
-            counts[i]+=1; counts[i+1]+=1; counts[i+2]+=1
-            if rest is not None:
-                return [("sequence", (i, i+1, i+2))] + rest
-
-        # 3) 将（只在还没有将时尝试）
-        if not has_pair and counts[i] >= 2:
-            counts[i] -= 2
-            rest = dfs(counts, melds_left, True)
-            counts[i] += 2
-            if rest is not None:
-                return rest
-
-        return None
-
-    # tiles 总体必须可胡（四面子一将）
-    # 我们只负责分解 4 个面子；将由 dfs 的 has_pair=true 保障
-    result = dfs(counts, 4, False)
-    return result
 
 def _melds_from_exposed(melds: Tuple[Meld, ...]) -> List[DecompMeld]:
     out: List[DecompMeld] = []
@@ -429,52 +468,132 @@ def _melds_from_exposed(melds: Tuple[Meld, ...]) -> List[DecompMeld]:
     return out
 
 
-def decompose_final(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> Optional[List[DecompMeld]]:
-    """
-    若当前 hand+melds 能胡，则返回一个包含 4 个面子的分解（带 concealed 标记）。
-    - 来自 hand 的面子：concealed=True
-    - 来自已副露/杠的面子：concealed = (m.kind == "kong_concealed")
-    """
-    # 先验证是否可胡
-    if not can_hu_four_plus_one(hand, melds):
-        return None
+@lru_cache(maxsize=None)
+def _decompose_tiles_all(counts: Tuple[int, ...], melds_left: int, pair_used: bool
+    ) -> Tuple[Tuple[Tuple[str, int], ...], ...]:
 
-    # 已有副露面子
+    # ✅ 先处理“成功终止”
+    if melds_left == 0:
+        return (tuple(),) if (pair_used and sum(counts) == 0) else tuple()
+
+    if melds_left < 0:
+        return tuple()
+
+    total = sum(counts)
+
+    # ✅ 强剪枝：手内总数必须 = 3*面子数 + (将是否已用 ? 0 : 2)
+    needed = 3 * melds_left + (0 if pair_used else 2)
+    if total != needed:
+        return tuple()
+
+    # ✅ 到这里 total 一定 >= 2，不必再做 total<2 的剪枝了
+
+    # 找第一张有计数的牌
+    try:
+        i = next(k for k, c in enumerate(counts) if c > 0)
+    except StopIteration:
+        return tuple()
+
+    res_set = set()
+
+    # 1) 选“将”（只在还没用将时可选）
+    if not pair_used:
+        for j in range(i, TILE_TYPES):
+            if counts[j] >= 2:
+                arr = list(counts)
+                arr[j] -= 2
+                for sol in _decompose_tiles_all(tuple(arr), melds_left, True):
+                    res_set.add(tuple(sorted(sol)))
+
+    # 2) 刻子
+    if counts[i] >= 3:
+        arr = list(counts); arr[i] -= 3
+        for sol in _decompose_tiles_all(tuple(arr), melds_left - 1, pair_used):
+            res_set.add(tuple(sorted((('t', i),) + sol)))
+
+    # 3) 顺子（不跨花色）
+    suit = i // 9
+    r = i % 9
+    if r <= 6:
+        i1, i2 = i + 1, i + 2
+        if (i1 // 9) == suit and (i2 // 9) == suit and counts[i] and counts[i1] and counts[i2]:
+            arr = list(counts)
+            arr[i] -= 1; arr[i1] -= 1; arr[i2] -= 1
+            for sol in _decompose_tiles_all(tuple(arr), melds_left - 1, pair_used):
+                res_set.add(tuple(sorted((('s', i),) + sol)))
+
+    return tuple(res_set)
+
+
+# 把 ('t'/'s', idx) 方案转成 DecompMeld 列表（concealed=True）
+def _expand_plan_to_melds(plan: Tuple[Tuple[str, int], ...]) -> List[DecompMeld]:
+    out: List[DecompMeld] = []
+    for kind, i in plan:
+        if kind == 't':
+            out.append(DecompMeld("triplet", (i, i, i), True))
+        else:
+            out.append(DecompMeld("sequence", (i, i + 1, i + 2), True))
+    return out
+
+
+# 真·全解 —— 返回所有不重复的 4 面子分解（含副露/杠）
+def decompose_final_all(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> List[List[DecompMeld]]:
+    """
+    若 hand+melds 能胡：返回“所有不重复”的 4 面子分解（DecompMeld 列表），
+    - 来自副露/杠：concealed = (kong_concealed 为 True，其余 False)
+    - 来自手牌：concealed=True
+    """
+    if not can_hu_four_plus_one(hand, melds):
+        return []
+
     exposed = _melds_from_exposed(melds)
     need_from_hand = 4 - len(exposed)
     if need_from_hand < 0:
-        return None
+        return []
 
-    # 从手牌 tiles 分解出 need_from_hand 个面子
-    # 因为 hand 里包含将眼，分解函数会把“将”留在 counts 里处理（通过 has_pair 逻辑）
-    sol = _decompose_tiles_one_solution(hand)
-    if sol is None:
-        return None
+    counts = counts_from_tiles(hand)
 
-    # 只取前 need_from_hand 个来自手牌的面子（sol 恰为 4 个面子）
-    from_hand: List[DecompMeld] = []
-    taken = 0
-    for kind, tiles in sol:
-        if taken >= need_from_hand:
-            break
-        from_hand.append(DecompMeld(kind, tiles, True))
-        taken += 1
+    # 生成所有“手内面子”方案（每个方案是若干 ('t'/'s', idx) 组成的元组，已去重）
+    plans = _decompose_tiles_all(tuple(counts), need_from_hand, False)
+    if not plans:
+        # 特例：若副露已达4个，手牌只需是“将”（多种将的选择都对应相同的面子解）
+        return [exposed] if len(exposed) == 4 else []
 
-    if len(exposed) + len(from_hand) != 4:
-        # 极小概率出现“面子分配不吻合”的情况（例如副露数与分解不一致）
-        # 退化：若副露数==4，直接返回副露；否则返回 None
-        if len(exposed) == 4:
-            return exposed
-        return None
+    out: List[List[DecompMeld]] = []
+    for plan in plans:
+        from_hand = _expand_plan_to_melds(plan)  # 全部 concealed=True
+        combo = exposed + from_hand
+        if len(combo) == 4:
+            # 规范化后去重（按 kind, tiles 排序）
+            out.append(combo)
 
-    return exposed + from_hand
+    # 结果去重：把每个分解规范成可哈希的键
+    def key(melds_list: List[DecompMeld]) -> Tuple:
+        norm = []
+        for m in melds_list:
+            tag = 0 if m.kind == "triplet" else 1
+            norm.append((tag, m.tiles))  # concealed 不影响“面子类型”的唯一性，这里只用于记分
+        return tuple(sorted(norm))
+
+    uniq = {}
+    for sol in out:
+        uniq[key(sol)] = sol  # 后者覆盖前者 OK（它们等价）
+
+    # 保留 concealed 标记：副露/暗杠的 concealed 按 _melds_from_exposed 逻辑，手内恒 True
+    return list(uniq.values())
 
 
 def is_four_concealed_triplets(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
-    d = decompose_final(hand, melds)
-    if not d:
+    # 有任何明副露（碰/明杠/加杠）则直接不可能四暗刻
+    if any(m.kind in ("pong", "kong_exposed", "kong_added") for m in melds):
         return False
-    return sum(1 for m in d if m.kind == "triplet" and m.concealed) == 4
+
+    sols = decompose_final_all(hand, melds)
+    # 只要存在一种分解：四个面子全是刻子，且全部 concealed=True（手内或暗杠）
+    return any(
+        len(sol) == 4 and all(m.kind == "triplet" and m.concealed for m in sol)
+        for sol in sols
+    )
 
 
 def is_four_kongs(melds: Tuple[Meld, ...]) -> bool:
@@ -521,23 +640,26 @@ def is_menzen(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
 
 
 def is_all_triplets(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
-    d = decompose_final(hand, melds)
-    if not d or len(d) != 4:
-        return False
-    return all(m.kind == "triplet" for m in d)
+    """是否存在一种分解使四面子全为刻子"""
+    sols = decompose_final_all(hand, melds)
+    return any(len(sol) == 4 and all(m.kind == "triplet" for m in sol) for sol in sols)
+
 
 def is_all_sequences(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:
-    """四面子全为顺子（用于平和判定）"""
-    d = decompose_final(hand, melds)
-    if not d or len(d) != 4:
-        return False
-    return all(m.kind == "sequence" for m in d)
+    """是否存在一种分解使四面子全为顺子（用于平和判定）"""
+    sols = decompose_final_all(hand, melds)
+    return any(len(sol) == 4 and all(m.kind == "sequence" for m in sol) for sol in sols)
+
 
 def count_concealed_triplets(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> int:
-    d = decompose_final(hand, melds)
-    if not d:
+    """
+    统计“暗刻”数量：对所有可能分解取最大值（更符合三暗刻计番应取最优的直觉）。
+    若不可胡，返回 0。
+    """
+    sols = decompose_final_all(hand, melds)
+    if not sols:
         return 0
-    return sum(1 for m in d if m.kind == "triplet" and m.concealed)
+    return max(sum(1 for m in sol if m.kind == "triplet" and m.concealed) for sol in sols)
 
 
 def is_full_flush(hand: Tuple[int, ...], melds: Tuple[Meld, ...]) -> bool:

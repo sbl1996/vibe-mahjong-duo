@@ -1,5 +1,5 @@
 [project]
-name = "backend"
+name = "mahjong_duo"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -10,3 +10,14 @@ dependencies = [
     "uvicorn[standard]>=0.36.0",
     "aiosqlite>=0.20.0",
 ]
+
+[tool.setuptools.packages.find]
+include = ["mahjong_duo*"]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.3.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

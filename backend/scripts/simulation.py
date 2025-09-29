@@ -14,8 +14,10 @@ python simulation.py --num_games 100 --verbose
 --verbose: 是否打印每一局的详细过程 (默认: 关闭)
 """
 import argparse
+import random
 import time
 import os
+import traceback
 import concurrent.futures
 from dataclasses import replace
 from typing import Optional, Tuple, Dict, Any
@@ -23,7 +25,7 @@ from typing import Optional, Tuple, Dict, Any
 from tqdm import tqdm
 
 # 从您的文件中导入所有必要的组件
-from rules_core import (
+from mahjong_duo.rules_core import (
     GameState,
     init_game,
     draw,
@@ -40,7 +42,7 @@ import importlib
 
 def load_advisor_modules(mod_names):
     """根据模块名列表动态导入 advisor 模块"""
-    return [importlib.import_module(name) for name in mod_names]
+    return [importlib.import_module("mahjong_duo.advisors." + name) for name in mod_names]
 
 advisors = None  # 在 main() 中初始化
 
@@ -80,11 +82,9 @@ def run_single_game(seed: int, verbose: bool = False, advisor_modules=None) -> T
     winner = None
     reason = ""
 
-    # 多进程环境下 advisor_modules 需传入
-    import importlib
     if advisor_modules is None:
         advisor_modules = ["advisor", "advisor_random"]
-    advisors = [importlib.import_module(name) for name in advisor_modules]
+    advisors = load_advisor_modules(advisor_modules)
 
     while not state.ended and state.wall:
         if verbose:
@@ -98,6 +98,7 @@ def run_single_game(seed: int, verbose: bool = False, advisor_modules=None) -> T
         # -----------------------------------------------------
         if state.last_discard and state.last_discard[0] != current_player:
             advice = current_advisor.advise_on_opponent_discard(state, current_player)
+            print(advice)
             action = advice["action"]
             
             if verbose:
@@ -237,8 +238,12 @@ def main():
     start_time = time.time()
 
     # --- 并行执行逻辑 ---
-    game_seeds = [args.seed + i for i in range(args.num_games)]
+    rng = random.Random(args.seed)
+    game_seeds = [rng.randint(0, 2**31 - 1) for _ in range(args.num_games)]
     results = []
+
+    run_single_game(args.seed, args.verbose, advisor_modules)  # 预热，避免首次调用开销影响计时
+    raise ValueError
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
         # 提交所有任务
@@ -268,6 +273,8 @@ def main():
                 except Exception as exc:
                     seed = future_to_seed.get(future)
                     print(f'Game with seed {seed} generated an exception: {exc}')
+                    raise exc
+                    traceback.print_exc()
                 finally:
                     # 更新进度条并显示当前积分差与胜负
                     diff = stats["total_score"][0] - stats["total_score"][1]
@@ -285,6 +292,7 @@ def main():
 
     # --- 打印报告 ---
     print("\n" + "="*20 + " Simulation Report " + "="*20)
+    print(f"Seed used: {args.seed}")
     print(f"Total games simulated: {args.num_games}")
     print(f"Total time taken: {duration:.2f} seconds")
     if duration > 0:
