@@ -3,7 +3,7 @@
     <div class="game-card">
       <header class="game-header">
         <div class="title-block">
-          <h1>Mahjong Duo</h1>
+          <h1>MAMA</h1>
         </div>
         <nav class="navigation">
           <template v-if="user">

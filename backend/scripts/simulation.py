@@ -98,7 +98,6 @@ def run_single_game(seed: int, verbose: bool = False, advisor_modules=None) -> T
         # -----------------------------------------------------
         if state.last_discard and state.last_discard[0] != current_player:
             advice = current_advisor.advise_on_opponent_discard(state, current_player)
-            print(advice)
             action = advice["action"]
             
             if verbose:
@@ -242,8 +241,8 @@ def main():
     game_seeds = [rng.randint(0, 2**31 - 1) for _ in range(args.num_games)]
     results = []
 
-    run_single_game(args.seed, args.verbose, advisor_modules)  # 预热，避免首次调用开销影响计时
-    raise ValueError
+    # run_single_game(args.seed, args.verbose, advisor_modules)  # 预热，避免首次调用开销影响计时
+    # raise ValueError
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
         # 提交所有任务

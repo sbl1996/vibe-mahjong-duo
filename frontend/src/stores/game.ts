@@ -116,6 +116,7 @@ const aiHintError = ref<string | null>(null)
 const selectedHandIndex = ref<number | null>(null)
 const lastDrawnIndex = ref<number | null>(null)
 const pendingDrawTile = ref<number | null>(null)
+const pendingAutoSelectIndex = ref<number | null>(null)
 const gameInProgress = ref(false)
 
 const discardActions = computed(() => actions.value.filter((a) => a.type === 'discard'))
@@ -127,6 +128,20 @@ const selectedDiscardAction = computed(() => {
 })
 const canDiscardSelected = computed(() => Boolean(selectedDiscardAction.value))
 const showActionFooter = computed(() => visibleActions.value.length > 0 || discardActions.value.length > 0)
+
+function attemptAutoSelectPendingTile() {
+  const index = pendingAutoSelectIndex.value
+  if (index === null) return
+  const tile = hand.value[index]
+  if (tile === undefined) {
+    pendingAutoSelectIndex.value = null
+    return
+  }
+  const canDiscardTile = discardActions.value.some((a) => a.tile === tile)
+  if (!canDiscardTile) return
+  selectedHandIndex.value = index
+  pendingAutoSelectIndex.value = null
+}
 const onlineSummary = computed(() => {
   const players = status.value?.players
   if (!players || !Array.isArray(players)) return '未知'
@@ -307,14 +322,23 @@ watch(
         const tile = pendingDrawTile.value
         const addedIndex = tile !== null ? findAddedIndexForTile(newHand, oldHand, tile) : -1
         const fallbackIndex = addedIndex >= 0 ? addedIndex : findAddedIndex(newHand, oldHand)
-        lastDrawnIndex.value = fallbackIndex >= 0 ? fallbackIndex : null
+        const targetIndex = fallbackIndex >= 0 ? fallbackIndex : null
+        lastDrawnIndex.value = targetIndex
         pendingDrawTile.value = null
+        if (targetIndex !== null) {
+          pendingAutoSelectIndex.value = targetIndex
+          attemptAutoSelectPendingTile()
+        } else {
+          pendingAutoSelectIndex.value = null
+        }
       } else if (newHand.length < oldHand.length) {
         lastDrawnIndex.value = null
         pendingDrawTile.value = null
+        pendingAutoSelectIndex.value = null
       }
     } else {
       pendingDrawTile.value = null
+      pendingAutoSelectIndex.value = null
     }
 
     if (selectedHandIndex.value === null) return
@@ -325,19 +349,23 @@ watch(
 )
 
 watch(discardActions, (newActions) => {
+  attemptAutoSelectPendingTile()
   if (selectedHandIndex.value === null) return
   if (!newActions.length) {
     selectedHandIndex.value = null
+    pendingAutoSelectIndex.value = null
     return
   }
   const tile = selectedTileValue.value
   if (tile === null) {
     selectedHandIndex.value = null
+    pendingAutoSelectIndex.value = null
     return
   }
   const stillAllowed = newActions.some((a) => a.tile === tile)
   if (!stillAllowed) {
     selectedHandIndex.value = null
+    pendingAutoSelectIndex.value = null
   }
 })
 
@@ -660,12 +688,14 @@ function connect() {
         if (evv.seat === seat.value) {
           lastDrawnIndex.value = null
           pendingDrawTile.value = typeof evv.tile === 'number' ? evv.tile : null
+          pendingAutoSelectIndex.value = null
         } else {
           oppHandCount.value = Math.min(14, oppHandCount.value + 1)
         }
       } else {
         lastDrawnIndex.value = null
         pendingDrawTile.value = null
+        pendingAutoSelectIndex.value = null
       }
       aiHint.value = null
       aiHintPhase.value = null
@@ -756,6 +786,7 @@ function playWithAi() {
 }
 
 function selectTile(index: number) {
+  pendingAutoSelectIndex.value = null
   const tile = hand.value[index]
   if (tile === undefined) return
   const canDiscardTile = discardActions.value.some((a) => a.tile === tile)
@@ -818,6 +849,7 @@ function resetState() {
   selectedHandIndex.value = null
   lastDrawnIndex.value = null
   pendingDrawTile.value = null
+  pendingAutoSelectIndex.value = null
   gameInProgress.value = false
 }
 
