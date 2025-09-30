@@ -25,7 +25,6 @@
           <div class="status-line">
             <span v-if="connected">
               <template v-if="status.players">
-                座位 {{ seat ?? '?' }}｜对手 {{ displayOpponent || '?' }}
                 <span class="player-status">
                   <span class="player-status-item">
                     <span class="status-dot" :class="status.players[seat === 0 ? 0 : 1] ? 'online' : 'offline'"></span>
@@ -62,7 +61,6 @@ const {
   connected,
   status,
   seat,
-  displayOpponent,
   gameInProgress,
   endGame: requestEndGame,
 } = store
